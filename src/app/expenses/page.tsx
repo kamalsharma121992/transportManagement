@@ -30,6 +30,8 @@ const emptyForm = {
   paid_by: 'JM transport',
   status: 'Paid',
   payment_source: 'Partner',
+  payment_mode: 'Cash',
+  card_details: '',
 };
 
 const typeColors: Record<string, string> = {
@@ -139,8 +141,9 @@ export default function ExpensesPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const { payment_mode, card_details, ...rest } = form;
     const payload = {
-      ...form,
+      ...rest,
       vehicle_number: form.expense_type === 'vehicle' ? form.vehicle_number : null,
       person: form.person || null,
       paid_by_person: form.paid_by_person || null,
@@ -148,11 +151,28 @@ export default function ExpensesPage() {
     if (editingId) {
       const { error } = await supabase.from('expenses').update(payload).eq('id', editingId);
       if (error) { toast.error(error.message); return; }
-      toast.success(`Expense updated (Paid from: ${payload.payment_source})`);
+      toast.success('Expense updated');
     } else {
       const { error } = await supabase.from('expenses').insert(payload);
       if (error) { toast.error(error.message); return; }
-      toast.success('Expense added');
+
+      // Auto-create capital contribution if paid by partner
+      if (form.payment_source === 'Partner' && form.paid_by_person) {
+        const { error: ccErr } = await supabase.from('capital_contributions').insert({
+          date: form.date,
+          contributor: form.paid_by_person,
+          contribution_type: form.payment_mode,
+          value: Number(form.amount),
+          description: form.description || form.category,
+          asset_details: form.payment_mode === 'Credit Card' ? form.card_details : null,
+          status: 'Unpaid',
+          paid_by: 'JM transport',
+        });
+        if (ccErr) toast.error('Expense saved but capital entry failed: ' + ccErr.message);
+        else toast.success('Expense added + capital contribution recorded');
+      } else {
+        toast.success('Expense added');
+      }
     }
     setDialogOpen(false);
     setEditingId(null);
@@ -175,6 +195,8 @@ export default function ExpensesPage() {
       paid_by: exp.paid_by,
       status: exp.status,
       payment_source: exp.payment_source || 'Partner',
+      payment_mode: 'Cash',
+      card_details: '',
     });
     setDialogOpen(true);
   }
@@ -295,6 +317,24 @@ export default function ExpensesPage() {
                     {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
+                {form.payment_source === 'Partner' && !editingId && (
+                  <>
+                    <div>
+                      <Label>Payment Mode</Label>
+                      <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.payment_mode} onChange={(e) => setForm({ ...form, payment_mode: e.target.value })}>
+                        <option value="Cash">Cash</option>
+                        <option value="Credit Card">Credit Card</option>
+                        <option value="Bank Transfer">Bank Transfer</option>
+                      </select>
+                    </div>
+                    {form.payment_mode === 'Credit Card' && (
+                      <div>
+                        <Label>Card Details</Label>
+                        <Input value={form.card_details} onChange={(e) => setForm({ ...form, card_details: e.target.value })} placeholder="e.g. HDFC CC" />
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
               <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Expense</Button>
             </form>

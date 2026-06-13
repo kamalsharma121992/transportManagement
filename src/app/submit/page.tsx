@@ -21,6 +21,8 @@ const emptyForm = {
   paid_by_person: '',
   paid_by: 'JM transport',
   payment_source: 'Partner',
+  payment_mode: 'Cash',
+  card_details: '',
 };
 
 export default function SubmitExpensePage() {
@@ -71,13 +73,29 @@ export default function SubmitExpensePage() {
     };
 
     const { data: inserted, error } = await supabase.from('expenses').insert(payload).select('id').single();
-    setSubmitting(false);
 
     if (error) {
+      setSubmitting(false);
       toast.error(error.message);
       return;
     }
 
+    // If paid by a partner, also create a capital contribution
+    if (form.payment_source === 'Partner' && form.paid_by_person) {
+      const { error: ccErr } = await supabase.from('capital_contributions').insert({
+        date: form.date,
+        contributor: form.paid_by_person,
+        contribution_type: form.payment_mode,
+        value: Number(form.amount),
+        description: form.description || form.category,
+        asset_details: form.payment_mode === 'Credit Card' ? form.card_details : null,
+        status: 'Unpaid',
+        paid_by: 'JM transport',
+      });
+      if (ccErr) toast.error('Expense saved but capital entry failed: ' + ccErr.message);
+    }
+
+    setSubmitting(false);
     setSubmittedId(inserted?.id || null);
     setSubmittedForm({ ...form });
     setSubmitted(true);
@@ -197,6 +215,17 @@ export default function SubmitExpensePage() {
                   <span className="text-gray-500">Paid From</span>
                   <span>{sf.payment_source}</span>
                 </div>
+                {sf.payment_source === 'Partner' && sf.payment_mode && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Payment Mode</span>
+                    <span>{sf.payment_mode}{sf.card_details ? ` (${sf.card_details})` : ''}</span>
+                  </div>
+                )}
+                {sf.payment_source === 'Partner' && sf.paid_by_person && (
+                  <div className="mt-2 pt-2 border-t">
+                    <p className="text-xs text-blue-600 font-medium">Capital contribution of {formatCurrency(Number(sf.amount))} recorded for {sf.paid_by_person}</p>
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3 mt-6">
@@ -333,6 +362,25 @@ export default function SubmitExpensePage() {
                   <option value="Revenue">Revenue</option>
                 </select>
               </div>
+
+              {form.payment_source === 'Partner' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Payment Mode</Label>
+                    <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.payment_mode} onChange={(e) => setForm({ ...form, payment_mode: e.target.value })}>
+                      <option value="Cash">Cash</option>
+                      <option value="Credit Card">Credit Card</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                    </select>
+                  </div>
+                  {form.payment_mode === 'Credit Card' && (
+                    <div>
+                      <Label>Card Details</Label>
+                      <Input value={form.card_details} onChange={(e) => setForm({ ...form, card_details: e.target.value })} placeholder="e.g. HDFC CC" />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <Button type="submit" className="w-full h-12 text-base" disabled={submitting}>
                 {submitting ? 'Submitting...' : submittedId ? 'Update Expense' : 'Submit Expense'}
