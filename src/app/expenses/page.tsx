@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase, Expense, ExpenseType, EXPENSE_TYPES, CATEGORIES_BY_TYPE, ALL_CATEGORIES, JM_PARTNERS, PAYMENT_SOURCES } from '@/lib/supabase';
-import { formatCurrency, formatDate } from '@/lib/format';
+import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -74,7 +74,7 @@ export default function ExpensesPage() {
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterMonth, setFilterMonth] = useState(currentMonth);
 
-  const hasActiveFilters = (filterMonth && filterMonth !== currentMonth) || filterType || filterVehicle || filterCategory || filterPerson || filterPaidByPerson || filterPaidBy || filterDateFrom || filterDateTo;
+  const hasActiveFilters = filterMonth !== currentMonth || filterType || filterVehicle || filterCategory || filterPerson || filterPaidByPerson || filterPaidBy || filterDateFrom || filterDateTo;
 
   function clearFilters() {
     setFilterType(''); setFilterVehicle(''); setFilterCategory('');
@@ -87,6 +87,8 @@ export default function ExpensesPage() {
   if (filterMonth) {
     const d = new Date(filterMonth + '-01');
     activeFilterLabels.push(d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }));
+  } else if (!filterDateFrom && !filterDateTo) {
+    activeFilterLabels.push('All months');
   }
   if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
   if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
@@ -391,51 +393,59 @@ export default function ExpensesPage() {
         {showFilters && (
           <Card>
             <CardContent className="py-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                <div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Month</label>
-                  <Input type="month" value={filterMonth} onChange={(e) => { setFilterMonth(e.target.value); setFilterDateFrom(''); setFilterDateTo(''); }} />
+                  <select
+                    className={FILTER_SELECT_CLASS}
+                    value={filterMonth}
+                    onChange={(e) => { setFilterMonth(e.target.value); setFilterDateFrom(''); setFilterDateTo(''); }}
+                  >
+                    {getMonthFilterOptions().map((opt) => (
+                      <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Date From</label>
-                  <Input type="date" value={filterDateFrom} onChange={(e) => { setFilterDateFrom(e.target.value); setFilterMonth(''); }} />
+                  <Input className="min-w-0" type="date" value={filterDateFrom} onChange={(e) => { setFilterDateFrom(e.target.value); setFilterMonth(''); }} />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Date To</label>
-                  <Input type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setFilterMonth(''); }} />
+                  <Input className="min-w-0" type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setFilterMonth(''); }} />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Entity</label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterPaidBy} onChange={(e) => setFilterPaidBy(e.target.value)}>
+                  <select className={FILTER_SELECT_CLASS} value={filterPaidBy} onChange={(e) => setFilterPaidBy(e.target.value)}>
                     <option value="">All</option>
                     <option value="JM transport">JM Transport</option>
                     <option value="Mahesh">Mahesh</option>
                   </select>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Who Paid</label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterPaidByPerson} onChange={(e) => setFilterPaidByPerson(e.target.value)}>
+                  <select className={FILTER_SELECT_CLASS} value={filterPaidByPerson} onChange={(e) => setFilterPaidByPerson(e.target.value)}>
                     <option value="">All</option>
                     {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Given To</label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)}>
+                  <select className={FILTER_SELECT_CLASS} value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)}>
                     <option value="">All</option>
                     {partners.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Vehicle</label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterVehicle} onChange={(e) => setFilterVehicle(e.target.value)}>
+                  <select className={FILTER_SELECT_CLASS} value={filterVehicle} onChange={(e) => setFilterVehicle(e.target.value)}>
                     <option value="">All</option>
                     {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
                   </select>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Category</label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
+                  <select className={FILTER_SELECT_CLASS} value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
                     <option value="">All</option>
                     {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
