@@ -10,9 +10,11 @@ import {
   Receipt,
   Landmark,
   Settings,
+  LogOut,
   Menu,
   X,
 } from 'lucide-react';
+import { logout } from '@/components/auth-gate';
 import { useState } from 'react';
 
 const navItems = [
@@ -80,6 +82,15 @@ export function Sidebar() {
             );
           })}
         </nav>
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t">
+          <button
+            onClick={logout}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-red-50 hover:text-red-600 transition-colors w-full"
+          >
+            <LogOut size={18} />
+            Logout
+          </button>
+        </div>
       </aside>
     </>
   );

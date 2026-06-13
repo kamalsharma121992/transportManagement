@@ -82,6 +82,7 @@ export type Expense = {
   bill_receipt_ref: string | null;
   paid_by: string;
   status: string;
+  payment_source: string | null;
 };
 
 export type CapitalContribution = {
@@ -95,6 +96,7 @@ export type CapitalContribution = {
   status: string;
   paid_date: string | null;
   paid_by: string;
+  payment_source: string | null;
 };
 
 export const EXPENSE_TYPES: { value: ExpenseType; label: string }[] = [
@@ -121,3 +123,6 @@ export const PAID_BY_ENTITIES = ['JM transport', 'Mahesh'] as const;
 
 // JM Transport partners (who pay and contribute capital)
 export const JM_PARTNERS = ['Kamal', 'Bimal', 'Subham', 'Mohit'] as const;
+
+// Payment sources for tracking cash flow
+export const PAYMENT_SOURCES = ['Partner', 'Revenue', 'Kamal', 'Bimal', 'Subham', 'Mohit'] as const;

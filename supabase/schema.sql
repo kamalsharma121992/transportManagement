@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   bill_receipt_ref TEXT,
   paid_by TEXT DEFAULT 'JM transport' REFERENCES partners(name),
   status TEXT DEFAULT 'Paid',
+  payment_source TEXT DEFAULT 'Partner',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS capital_contributions (
   status TEXT DEFAULT 'Unpaid',
   paid_date DATE,
   paid_by TEXT DEFAULT 'JM transport',
+  payment_source TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

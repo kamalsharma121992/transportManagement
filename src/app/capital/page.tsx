@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, CapitalContribution, JM_PARTNERS } from '@/lib/supabase';
+import { supabase, CapitalContribution, JM_PARTNERS, PAYMENT_SOURCES } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,7 +36,7 @@ export default function CapitalPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [payingId, setPayingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
-  const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport' });
+  const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterContributor, setFilterContributor] = useState('');
 
@@ -90,7 +90,7 @@ export default function CapitalPage() {
 
   function startPay(c: CapitalContribution) {
     setPayingId(c.id);
-    setPayForm({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport' });
+    setPayForm({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
     setPayDialogOpen(true);
   }
 
@@ -98,7 +98,7 @@ export default function CapitalPage() {
     e.preventDefault();
     if (!payingId) return;
     const { error } = await supabase.from('capital_contributions')
-      .update({ status: 'Paid', paid_date: payForm.paid_date, paid_by: payForm.paid_by })
+      .update({ status: 'Paid', paid_date: payForm.paid_date, paid_by: payForm.paid_by, payment_source: payForm.payment_source })
       .eq('id', payingId);
     if (error) { toast.error(error.message); return; }
     toast.success('Marked as paid');
@@ -203,9 +203,9 @@ export default function CapitalPage() {
                 <Input type="date" value={payForm.paid_date} onChange={(e) => setPayForm({ ...payForm, paid_date: e.target.value })} required />
               </div>
               <div>
-                <Label>Paid By</Label>
-                <select className="w-full border rounded-md px-3 py-2 text-sm" value={payForm.paid_by} onChange={(e) => setPayForm({ ...payForm, paid_by: e.target.value })}>
-                  <option value="JM transport">JM Transport</option>
+                <Label>Paid From</Label>
+                <select className="w-full border rounded-md px-3 py-2 text-sm" value={payForm.payment_source} onChange={(e) => setPayForm({ ...payForm, payment_source: e.target.value })}>
+                  {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
               <Button type="submit" className="w-full bg-green-600 hover:bg-green-700">Confirm Payment</Button>
@@ -295,15 +295,16 @@ export default function CapitalPage() {
                   <TableHead>Description</TableHead>
                   <TableHead>Card/Asset</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Paid From</TableHead>
                   <TableHead>Paid Date</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={9} className="text-center py-8">Loading...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={10} className="text-center py-8">Loading...</TableCell></TableRow>
                 ) : contributions.length === 0 ? (
-                  <TableRow><TableCell colSpan={9} className="text-center py-8 text-gray-500">No contributions found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={10} className="text-center py-8 text-gray-500">No contributions found</TableCell></TableRow>
                 ) : (
                   contributions.map((c) => (
                     <TableRow key={c.id} className={c.status === 'Paid' ? 'bg-green-50/50' : ''}>
@@ -327,6 +328,13 @@ export default function CapitalPage() {
                             <Clock className="h-3 w-3" /> Unpaid
                           </span>
                         )}
+                      </TableCell>
+                      <TableCell>
+                        {c.payment_source ? (
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${c.payment_source === 'Revenue' ? 'bg-green-100 text-green-800' : 'bg-violet-100 text-violet-800'}`}>
+                            {c.payment_source}
+                          </span>
+                        ) : <span className="text-gray-300">-</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-gray-500">
                         {c.paid_date ? formatDate(c.paid_date) : '-'}

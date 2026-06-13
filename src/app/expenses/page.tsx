@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, Expense, ExpenseType, EXPENSE_TYPES, CATEGORIES_BY_TYPE, ALL_CATEGORIES, JM_PARTNERS } from '@/lib/supabase';
+import { supabase, Expense, ExpenseType, EXPENSE_TYPES, CATEGORIES_BY_TYPE, ALL_CATEGORIES, JM_PARTNERS, PAYMENT_SOURCES } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,7 @@ const emptyForm = {
   bill_receipt_ref: '',
   paid_by: 'JM transport',
   status: 'Paid',
+  payment_source: 'Partner',
 };
 
 const typeColors: Record<string, string> = {
@@ -59,7 +60,8 @@ export default function ExpensesPage() {
   const [form, setForm] = useState(emptyForm);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Filters
+  // Filters — default to current month
+  const currentMonth = new Date().toISOString().slice(0, 7);
   const [filterType, setFilterType] = useState<ExpenseType | ''>('');
   const [filterVehicle, setFilterVehicle] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
@@ -68,15 +70,30 @@ export default function ExpensesPage() {
   const [filterPaidBy, setFilterPaidBy] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterMonth, setFilterMonth] = useState('');
+  const [filterMonth, setFilterMonth] = useState(currentMonth);
 
-  const hasActiveFilters = filterType || filterVehicle || filterCategory || filterPerson || filterPaidByPerson || filterPaidBy || filterDateFrom || filterDateTo || filterMonth;
+  const hasActiveFilters = (filterMonth && filterMonth !== currentMonth) || filterType || filterVehicle || filterCategory || filterPerson || filterPaidByPerson || filterPaidBy || filterDateFrom || filterDateTo;
 
   function clearFilters() {
     setFilterType(''); setFilterVehicle(''); setFilterCategory('');
     setFilterPerson(''); setFilterPaidByPerson(''); setFilterPaidBy('');
-    setFilterDateFrom(''); setFilterDateTo(''); setFilterMonth('');
+    setFilterDateFrom(''); setFilterDateTo(''); setFilterMonth(currentMonth);
   }
+
+  // Active filter labels
+  const activeFilterLabels: string[] = [];
+  if (filterMonth) {
+    const d = new Date(filterMonth + '-01');
+    activeFilterLabels.push(d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }));
+  }
+  if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
+  if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
+  if (filterType) activeFilterLabels.push('Type: ' + filterType);
+  if (filterPaidBy) activeFilterLabels.push('Entity: ' + filterPaidBy);
+  if (filterPaidByPerson) activeFilterLabels.push('Paid by: ' + filterPaidByPerson);
+  if (filterPerson) activeFilterLabels.push('Given to: ' + filterPerson);
+  if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
+  if (filterCategory) activeFilterLabels.push('Category: ' + filterCategory);
 
   async function fetchExpenses() {
     let query = supabase.from('expenses').select('*').order('date', { ascending: false });
@@ -131,7 +148,7 @@ export default function ExpensesPage() {
     if (editingId) {
       const { error } = await supabase.from('expenses').update(payload).eq('id', editingId);
       if (error) { toast.error(error.message); return; }
-      toast.success('Expense updated');
+      toast.success(`Expense updated (Paid from: ${payload.payment_source})`);
     } else {
       const { error } = await supabase.from('expenses').insert(payload);
       if (error) { toast.error(error.message); return; }
@@ -157,6 +174,7 @@ export default function ExpensesPage() {
       bill_receipt_ref: exp.bill_receipt_ref || '',
       paid_by: exp.paid_by,
       status: exp.status,
+      payment_source: exp.payment_source || 'Partner',
     });
     setDialogOpen(true);
   }
@@ -177,7 +195,25 @@ export default function ExpensesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">Expenses</h1>
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-gray-900">Expenses</h1>
+            {hasActiveFilters && (
+              <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">
+                <X className="h-3 w-3" /> Reset
+              </button>
+            )}
+          </div>
+          {activeFilterLabels.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {activeFilterLabels.map((label) => (
+                <span key={label} className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs font-medium rounded-full">
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
         <Button onClick={() => setDialogOpen(true)}><Plus className="h-4 w-4 mr-2" /> Add Expense</Button>
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setEditingId(null); setForm(emptyForm); } }}>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -251,6 +287,12 @@ export default function ExpensesPage() {
                   <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                     <option value="Paid">Paid</option>
                     <option value="Pending">Pending</option>
+                  </select>
+                </div>
+                <div>
+                  <Label>Paid From</Label>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.payment_source} onChange={(e) => setForm({ ...form, payment_source: e.target.value })}>
+                    {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
               </div>
@@ -385,14 +427,15 @@ export default function ExpensesPage() {
                   <TableHead>Entity</TableHead>
                   <TableHead>Paid By</TableHead>
                   <TableHead>Given To</TableHead>
+                  <TableHead>Paid From</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={10} className="text-center py-8">Loading...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={11} className="text-center py-8">Loading...</TableCell></TableRow>
                 ) : expenses.length === 0 ? (
-                  <TableRow><TableCell colSpan={10} className="text-center py-8 text-gray-500">No expenses found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={11} className="text-center py-8 text-gray-500">No expenses found</TableCell></TableRow>
                 ) : (
                   expenses.map((exp) => (
                     <TableRow key={exp.id}>
@@ -419,6 +462,11 @@ export default function ExpensesPage() {
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{exp.paid_by_person || <span className="text-gray-300">-</span>}</TableCell>
                       <TableCell className="whitespace-nowrap">{exp.person || <span className="text-gray-300">-</span>}</TableCell>
+                      <TableCell>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${exp.payment_source === 'Revenue' ? 'bg-green-100 text-green-800' : 'bg-violet-100 text-violet-800'}`}>
+                          {exp.payment_source || 'Partner'}
+                        </span>
+                      </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           <Button variant="ghost" size="icon" onClick={() => startEdit(exp)}><Pencil className="h-4 w-4" /></Button>

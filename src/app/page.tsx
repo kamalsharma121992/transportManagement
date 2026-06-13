@@ -9,7 +9,7 @@ import {
   TrendingUp,
   TrendingDown,
   IndianRupee,
-  Truck,
+  Wallet,
   ChevronDown,
   ChevronUp,
   X,
@@ -39,27 +39,46 @@ const COLORS = [
 export default function Dashboard() {
   const [trips, setTrips] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
+  const [capital, setCapital] = useState<any[]>([]);
+  const [cashData, setCashData] = useState({ allRevenue: 0, allExpFromRevenue: 0, capPaidFromRevenue: 0 });
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [partners, setPartners] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Filters
-  const [filterMonth, setFilterMonth] = useState('');
+  // Filters — default to current month
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterPaidBy, setFilterPaidBy] = useState('');
   const [filterPaidByPerson, setFilterPaidByPerson] = useState('');
   const [filterPerson, setFilterPerson] = useState('');
   const [filterVehicle, setFilterVehicle] = useState('');
+  const [filterPaymentSource, setFilterPaymentSource] = useState('');
 
-  const hasActiveFilters = filterMonth || filterDateFrom || filterDateTo || filterPaidBy || filterPaidByPerson || filterPerson || filterVehicle;
+  const hasActiveFilters = (filterMonth && filterMonth !== currentMonth) || filterDateFrom || filterDateTo || filterPaidBy || filterPaidByPerson || filterPerson || filterVehicle || filterPaymentSource;
 
   function clearFilters() {
-    setFilterMonth(''); setFilterDateFrom(''); setFilterDateTo('');
+    setFilterMonth(currentMonth); setFilterDateFrom(''); setFilterDateTo('');
     setFilterPaidBy(''); setFilterPaidByPerson(''); setFilterPerson('');
-    setFilterVehicle('');
+    setFilterVehicle(''); setFilterPaymentSource('');
   }
+
+  // Build active filter labels for display
+  const activeFilterLabels: string[] = [];
+  if (filterMonth) {
+    const d = new Date(filterMonth + '-01');
+    activeFilterLabels.push(d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }));
+  }
+  if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
+  if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
+  if (filterPaidBy) activeFilterLabels.push('Entity: ' + filterPaidBy);
+  if (filterPaidByPerson) activeFilterLabels.push('Paid by: ' + filterPaidByPerson);
+  if (filterPerson) activeFilterLabels.push('Given to: ' + filterPerson);
+  if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
+  if (filterPaymentSource) activeFilterLabels.push('Source: ' + filterPaymentSource);
+
 
   useEffect(() => {
     async function fetchData() {
@@ -80,6 +99,7 @@ export default function Dashboard() {
       if (filterPaidByPerson) expQuery = expQuery.eq('paid_by_person', filterPaidByPerson);
       if (filterPerson) expQuery = expQuery.eq('person', filterPerson);
       if (filterVehicle) expQuery = expQuery.eq('vehicle_number', filterVehicle);
+      if (filterPaymentSource) expQuery = expQuery.eq('payment_source', filterPaymentSource);
       if (filterMonth) {
         const [y, m] = filterMonth.split('-');
         expQuery = expQuery.gte('date', `${y}-${m}-01`).lte('date', new Date(Number(y), Number(m), 0).toISOString().split('T')[0]);
@@ -88,9 +108,21 @@ export default function Dashboard() {
         if (filterDateTo) expQuery = expQuery.lte('date', filterDateTo);
       }
 
-      const [{ data: t }, { data: e }] = await Promise.all([tripQuery, expQuery]);
+      const [{ data: t }, { data: e }, { data: c }, { data: allT }, { data: allE }] = await Promise.all([
+        tripQuery,
+        expQuery,
+        supabase.from('capital_contributions').select('*'),
+        supabase.from('trips').select('total_revenue'),
+        supabase.from('expenses').select('amount, payment_source'),
+      ]);
       setTrips(t || []);
       setExpenses(e || []);
+      setCapital(c || []);
+      // Cash available always from unfiltered data
+      const allRevenue = (allT || []).reduce((s: number, r: any) => s + Number(r.total_revenue), 0);
+      const allExpFromRevenue = (allE || []).filter((r: any) => r.payment_source === 'Revenue').reduce((s: number, r: any) => s + Number(r.amount), 0);
+      const capPaidFromRevenue = (c || []).filter((r: any) => r.status === 'Paid' && r.payment_source === 'Revenue').reduce((s: number, r: any) => s + Number(r.value), 0);
+      setCashData({ allRevenue, allExpFromRevenue, capPaidFromRevenue });
       setLoading(false);
     }
 
@@ -103,7 +135,7 @@ export default function Dashboard() {
     });
 
     fetchData();
-  }, [filterMonth, filterDateFrom, filterDateTo, filterPaidBy, filterPaidByPerson, filterPerson, filterVehicle]);
+  }, [filterMonth, filterDateFrom, filterDateTo, filterPaidBy, filterPaidByPerson, filterPerson, filterVehicle, filterPaymentSource]);
 
   // Compute dashboard data from filtered results
   const totalRevenue = trips.reduce((sum, t) => sum + Number(t.total_revenue), 0);
@@ -111,6 +143,10 @@ export default function Dashboard() {
   const netProfit = totalRevenue - totalExpenses;
   const jmTotal = expenses.filter(e => e.paid_by === 'JM transport').reduce((s, e) => s + Number(e.amount), 0);
   const maheshTotal = expenses.filter(e => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0);
+
+  // Cash flow (always from ALL data, not filtered)
+  const totalCapitalIn = capital.reduce((s, c) => s + Number(c.value), 0);
+  const cashAvailable = cashData.allRevenue - cashData.allExpFromRevenue - cashData.capPaidFromRevenue;
 
   // Category breakdown
   const catMap: Record<string, number> = {};
@@ -147,10 +183,6 @@ export default function Dashboard() {
     .map(([vehicle, amount]) => ({ vehicle, amount }))
     .sort((a, b) => b.amount - a.amount);
 
-  // Unique days for avg calculation
-  const uniqueDays = new Set([...trips.map((t: any) => t.date), ...expenses.map((e: any) => e.date)]);
-  const avgCostPerDay = uniqueDays.size > 0 ? totalExpenses / uniqueDays.size : 0;
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -161,12 +193,23 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        {hasActiveFilters && (
-          <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">
-            <X className="h-3 w-3" /> Clear filters
-          </button>
+      <div>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+          {hasActiveFilters && (
+            <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">
+              <X className="h-3 w-3" /> Reset to current month
+            </button>
+          )}
+        </div>
+        {activeFilterLabels.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {activeFilterLabels.map((label) => (
+              <span key={label} className="px-2 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full">
+                {label}
+              </span>
+            ))}
+          </div>
         )}
       </div>
 
@@ -224,6 +267,18 @@ export default function Dashboard() {
                     {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
                   </select>
                 </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Paid From</label>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterPaymentSource} onChange={(e) => setFilterPaymentSource(e.target.value)}>
+                    <option value="">All</option>
+                    <option value="Revenue">Revenue</option>
+                    <option value="Kamal">Kamal</option>
+                    <option value="Bimal">Bimal</option>
+                    <option value="Subham">Subham</option>
+                    <option value="Mohit">Mohit</option>
+                    <option value="Partner">Partner (unset)</option>
+                  </select>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -272,22 +327,24 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className={cashAvailable >= 0 ? 'border-green-300' : 'border-red-300'}>
           <CardContent className="py-4 px-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Avg/Day</p>
-                <p className="text-xl font-bold text-blue-600">{formatCurrency(avgCostPerDay)}</p>
-                <p className="text-xs text-gray-400">{uniqueDays.size} days</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Cash Available</p>
+                <p className={`text-xl font-bold ${cashAvailable >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                  {formatCurrency(cashAvailable)}
+                </p>
+                <p className="text-xs text-gray-400">from revenue</p>
               </div>
-              <Truck className="h-7 w-7 text-blue-500" />
+              <Wallet className={`h-7 w-7 ${cashAvailable >= 0 ? 'text-green-500' : 'text-red-500'}`} />
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Entity split */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* Entity split + Capital */}
+      <div className="grid grid-cols-3 gap-3">
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-sky-600 uppercase tracking-wide">JM Transport Expenses</p>
@@ -298,6 +355,12 @@ export default function Dashboard() {
           <CardContent className="py-3 px-4">
             <p className="text-xs text-orange-600 uppercase tracking-wide">Mahesh Expenses</p>
             <p className="text-2xl font-bold text-orange-700">{formatCurrency(maheshTotal)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-3 px-4">
+            <p className="text-xs text-violet-600 uppercase tracking-wide">Capital Contributed</p>
+            <p className="text-2xl font-bold text-violet-700">{formatCurrency(totalCapitalIn)}</p>
           </CardContent>
         </Card>
       </div>
