@@ -296,65 +296,45 @@ export default function Dashboard() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
         <Card>
-          <CardContent className="py-4 px-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Revenue</p>
-                <p className="text-xl font-bold text-green-600">{formatCurrency(totalRevenue)}</p>
-                <p className="text-xs text-gray-400">{trips.length} trips</p>
-              </div>
-              <TrendingUp className="h-7 w-7 text-green-500" />
-            </div>
+          <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
+            <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Revenue</p>
+            <p className="text-base sm:text-xl font-bold text-green-600 truncate">{formatCurrency(totalRevenue)}</p>
+            <p className="text-[10px] sm:text-xs text-gray-400">{trips.length} trips</p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="py-4 px-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Expenses</p>
-                <p className="text-xl font-bold text-red-600">{formatCurrency(totalExpenses)}</p>
-                <p className="text-xs text-gray-400">{expenses.length} records</p>
-              </div>
-              <TrendingDown className="h-7 w-7 text-red-500" />
-            </div>
+          <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
+            <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Expenses</p>
+            <p className="text-base sm:text-xl font-bold text-red-600 truncate">{formatCurrency(totalExpenses)}</p>
+            <p className="text-[10px] sm:text-xs text-gray-400">{expenses.length} records</p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="py-4 px-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Net Profit</p>
-                <p className={`text-xl font-bold ${netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {formatCurrency(netProfit)}
-                </p>
-              </div>
-              <IndianRupee className="h-7 w-7 text-gray-400" />
-            </div>
+          <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
+            <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Net Profit</p>
+            <p className={`text-base sm:text-xl font-bold truncate ${netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {formatCurrency(netProfit)}
+            </p>
           </CardContent>
         </Card>
 
         <Card className={cashAvailable >= 0 ? 'border-green-300' : 'border-red-300'}>
-          <CardContent className="py-4 px-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Cash Available</p>
-                <p className={`text-xl font-bold ${cashAvailable >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                  {formatCurrency(cashAvailable)}
-                </p>
-                <p className="text-xs text-gray-400">from revenue</p>
-              </div>
-              <Wallet className={`h-7 w-7 ${cashAvailable >= 0 ? 'text-green-500' : 'text-red-500'}`} />
-            </div>
+          <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
+            <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Cash Available</p>
+            <p className={`text-base sm:text-xl font-bold truncate ${cashAvailable >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+              {formatCurrency(cashAvailable)}
+            </p>
+            <p className="text-[10px] sm:text-xs text-gray-400">from revenue</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Entity split + Capital */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-sky-600 uppercase tracking-wide">JM Transport Expenses</p>

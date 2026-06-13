@@ -107,7 +107,7 @@ export const EXPENSE_TYPES: { value: ExpenseType; label: string }[] = [
 
 export const CATEGORIES_BY_TYPE: Record<ExpenseType, string[]> = {
   vehicle: ['Fuel (Diesel)', 'Toll Taxes', 'Maintenance', 'Insurance', 'EMI / Loan Payments', 'Driver Salary', 'Others'],
-  operational: ['Meals', 'Hotel Stay', 'Rent', 'Supplies', 'Daily Allowance', 'Advance', 'Salary', 'Partner Allowance'],
+  operational: ['Meals', 'Hotel Stay', 'Rent', 'Supplies', 'Daily Allowance', 'Advance', 'Salary', 'Partner Allowance', 'Office Expense'],
   personal: ['Personal Care', 'Other'],
   other: ['Other'],
 };
@@ -115,7 +115,7 @@ export const CATEGORIES_BY_TYPE: Record<ExpenseType, string[]> = {
 export const ALL_CATEGORIES = [
   'Fuel (Diesel)', 'Toll Taxes', 'Maintenance', 'Insurance', 'EMI / Loan Payments',
   'Driver Salary', 'Meals', 'Hotel Stay', 'Rent', 'Supplies', 'Daily Allowance',
-  'Advance', 'Salary', 'Partner Allowance', 'Personal Care', 'Others', 'Other',
+  'Advance', 'Salary', 'Partner Allowance', 'Office Expense', 'Personal Care', 'Others', 'Other',
 ] as const;
 
 // 2 paying entities
