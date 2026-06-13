@@ -1,65 +1,396 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useEffect, useState } from 'react';
+import { supabase, JM_PARTNERS } from '@/lib/supabase';
+import { formatCurrency } from '@/lib/format';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import {
+  TrendingUp,
+  TrendingDown,
+  IndianRupee,
+  Truck,
+  ChevronDown,
+  ChevronUp,
+  X,
+} from 'lucide-react';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+  LineChart,
+  Line,
+  CartesianGrid,
+} from 'recharts';
+
+const COLORS = [
+  '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
+  '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
+  '#14b8a6', '#e11d48', '#a855f7',
+];
+
+export default function Dashboard() {
+  const [trips, setTrips] = useState<any[]>([]);
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [vehicles, setVehicles] = useState<string[]>([]);
+  const [partners, setPartners] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Filters
+  const [filterMonth, setFilterMonth] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterPaidBy, setFilterPaidBy] = useState('');
+  const [filterPaidByPerson, setFilterPaidByPerson] = useState('');
+  const [filterPerson, setFilterPerson] = useState('');
+  const [filterVehicle, setFilterVehicle] = useState('');
+
+  const hasActiveFilters = filterMonth || filterDateFrom || filterDateTo || filterPaidBy || filterPaidByPerson || filterPerson || filterVehicle;
+
+  function clearFilters() {
+    setFilterMonth(''); setFilterDateFrom(''); setFilterDateTo('');
+    setFilterPaidBy(''); setFilterPaidByPerson(''); setFilterPerson('');
+    setFilterVehicle('');
+  }
+
+  useEffect(() => {
+    async function fetchData() {
+      // Build trip query
+      let tripQuery = supabase.from('trips').select('*');
+      if (filterVehicle) tripQuery = tripQuery.eq('vehicle_number', filterVehicle);
+      if (filterMonth) {
+        const [y, m] = filterMonth.split('-');
+        tripQuery = tripQuery.gte('date', `${y}-${m}-01`).lte('date', new Date(Number(y), Number(m), 0).toISOString().split('T')[0]);
+      } else {
+        if (filterDateFrom) tripQuery = tripQuery.gte('date', filterDateFrom);
+        if (filterDateTo) tripQuery = tripQuery.lte('date', filterDateTo);
+      }
+
+      // Build expense query
+      let expQuery = supabase.from('expenses').select('*');
+      if (filterPaidBy) expQuery = expQuery.eq('paid_by', filterPaidBy);
+      if (filterPaidByPerson) expQuery = expQuery.eq('paid_by_person', filterPaidByPerson);
+      if (filterPerson) expQuery = expQuery.eq('person', filterPerson);
+      if (filterVehicle) expQuery = expQuery.eq('vehicle_number', filterVehicle);
+      if (filterMonth) {
+        const [y, m] = filterMonth.split('-');
+        expQuery = expQuery.gte('date', `${y}-${m}-01`).lte('date', new Date(Number(y), Number(m), 0).toISOString().split('T')[0]);
+      } else {
+        if (filterDateFrom) expQuery = expQuery.gte('date', filterDateFrom);
+        if (filterDateTo) expQuery = expQuery.lte('date', filterDateTo);
+      }
+
+      const [{ data: t }, { data: e }] = await Promise.all([tripQuery, expQuery]);
+      setTrips(t || []);
+      setExpenses(e || []);
+      setLoading(false);
+    }
+
+    // Load master data once
+    supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
+      setVehicles((data || []).map((v: any) => v.vehicle_number));
+    });
+    supabase.from('partners').select('name').order('name').then(({ data }) => {
+      setPartners((data || []).map((p: any) => p.name));
+    });
+
+    fetchData();
+  }, [filterMonth, filterDateFrom, filterDateTo, filterPaidBy, filterPaidByPerson, filterPerson, filterVehicle]);
+
+  // Compute dashboard data from filtered results
+  const totalRevenue = trips.reduce((sum, t) => sum + Number(t.total_revenue), 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const netProfit = totalRevenue - totalExpenses;
+  const jmTotal = expenses.filter(e => e.paid_by === 'JM transport').reduce((s, e) => s + Number(e.amount), 0);
+  const maheshTotal = expenses.filter(e => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0);
+
+  // Category breakdown
+  const catMap: Record<string, number> = {};
+  expenses.forEach((e) => {
+    catMap[e.category] = (catMap[e.category] || 0) + Number(e.amount);
+  });
+  const categoryBreakdown = Object.entries(catMap)
+    .map(([name, value]) => ({ name, value }))
+    .filter((c) => c.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  // Daily revenue vs expenses
+  const dateMap: Record<string, { revenue: number; expenses: number }> = {};
+  trips.forEach((t) => {
+    const d = t.date;
+    if (!dateMap[d]) dateMap[d] = { revenue: 0, expenses: 0 };
+    dateMap[d].revenue += Number(t.total_revenue);
+  });
+  expenses.forEach((e) => {
+    const d = e.date;
+    if (!dateMap[d]) dateMap[d] = { revenue: 0, expenses: 0 };
+    dateMap[d].expenses += Number(e.amount);
+  });
+  const dailyRevenue = Object.entries(dateMap)
+    .map(([date, vals]) => ({ date, ...vals }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // Vehicle-wise expenses
+  const vehMap: Record<string, number> = {};
+  expenses.filter((e) => e.expense_type === 'vehicle' && e.vehicle_number).forEach((e) => {
+    vehMap[e.vehicle_number] = (vehMap[e.vehicle_number] || 0) + Number(e.amount);
+  });
+  const vehicleExpenses = Object.entries(vehMap)
+    .map(([vehicle, amount]) => ({ vehicle, amount }))
+    .sort((a, b) => b.amount - a.amount);
+
+  // Unique days for avg calculation
+  const uniqueDays = new Set([...trips.map((t: any) => t.date), ...expenses.map((e: any) => e.date)]);
+  const avgCostPerDay = uniqueDays.size > 0 ? totalExpenses / uniqueDays.size : 0;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        {hasActiveFilters && (
+          <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">
+            <X className="h-3 w-3" /> Clear filters
+          </button>
+        )}
+      </div>
+
+      {/* Advanced Filters */}
+      <div className="space-y-2">
+        <button onClick={() => setShowFilters(!showFilters)}
+          className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900 font-medium">
+          {showFilters ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          Advanced Filters
+          {hasActiveFilters && <span className="ml-1 bg-blue-600 text-white text-xs rounded-full px-1.5 py-0.5">Active</span>}
+        </button>
+
+        {showFilters && (
+          <Card>
+            <CardContent className="py-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Month</label>
+                  <Input type="month" value={filterMonth} onChange={(e) => { setFilterMonth(e.target.value); setFilterDateFrom(''); setFilterDateTo(''); }} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Date From</label>
+                  <Input type="date" value={filterDateFrom} onChange={(e) => { setFilterDateFrom(e.target.value); setFilterMonth(''); }} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Date To</label>
+                  <Input type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setFilterMonth(''); }} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Entity</label>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterPaidBy} onChange={(e) => setFilterPaidBy(e.target.value)}>
+                    <option value="">All</option>
+                    <option value="JM transport">JM Transport</option>
+                    <option value="Mahesh">Mahesh</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Who Paid</label>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterPaidByPerson} onChange={(e) => setFilterPaidByPerson(e.target.value)}>
+                    <option value="">All</option>
+                    {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Given To</label>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)}>
+                    <option value="">All</option>
+                    {partners.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Vehicle</label>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={filterVehicle} onChange={(e) => setFilterVehicle(e.target.value)}>
+                    <option value="">All</option>
+                    {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Revenue</p>
+                <p className="text-xl font-bold text-green-600">{formatCurrency(totalRevenue)}</p>
+                <p className="text-xs text-gray-400">{trips.length} trips</p>
+              </div>
+              <TrendingUp className="h-7 w-7 text-green-500" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Expenses</p>
+                <p className="text-xl font-bold text-red-600">{formatCurrency(totalExpenses)}</p>
+                <p className="text-xs text-gray-400">{expenses.length} records</p>
+              </div>
+              <TrendingDown className="h-7 w-7 text-red-500" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Net Profit</p>
+                <p className={`text-xl font-bold ${netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {formatCurrency(netProfit)}
+                </p>
+              </div>
+              <IndianRupee className="h-7 w-7 text-gray-400" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Avg/Day</p>
+                <p className="text-xl font-bold text-blue-600">{formatCurrency(avgCostPerDay)}</p>
+                <p className="text-xs text-gray-400">{uniqueDays.size} days</p>
+              </div>
+              <Truck className="h-7 w-7 text-blue-500" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Entity split */}
+      <div className="grid grid-cols-2 gap-3">
+        <Card>
+          <CardContent className="py-3 px-4">
+            <p className="text-xs text-sky-600 uppercase tracking-wide">JM Transport Expenses</p>
+            <p className="text-2xl font-bold text-sky-700">{formatCurrency(jmTotal)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-3 px-4">
+            <p className="text-xs text-orange-600 uppercase tracking-wide">Mahesh Expenses</p>
+            <p className="text-2xl font-bold text-orange-700">{formatCurrency(maheshTotal)}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Revenue vs Expenses</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={dailyRevenue}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={(d) => new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                  fontSize={12}
+                />
+                <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} fontSize={12} />
+                <Tooltip
+                  formatter={(value) => formatCurrency(Number(value))}
+                  labelFormatter={(d) => new Date(String(d)).toLocaleDateString('en-IN')}
+                />
+                <Line type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={2} name="Revenue" />
+                <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} name="Expenses" />
+                <Legend />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Expense Breakdown</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-4 items-center">
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie
+                    data={categoryBreakdown}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={90}
+                    dataKey="value"
+                    paddingAngle={2}
+                  >
+                    {categoryBreakdown.map((_, i) => (
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => formatCurrency(Number(value))} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
+                {categoryBreakdown.map((item, i) => (
+                  <div key={item.name} className="flex items-center justify-between text-sm gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                      <span className="truncate text-gray-700">{item.name}</span>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="font-medium text-gray-900">{formatCurrency(item.value)}</span>
+                      <span className="text-gray-400 text-xs ml-1">
+                        ({((item.value / totalExpenses) * 100).toFixed(0)}%)
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Vehicle-wise Expenses</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={vehicleExpenses}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="vehicle" fontSize={12} />
+              <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} fontSize={12} />
+              <Tooltip formatter={(value) => formatCurrency(Number(value))} />
+              <Bar dataKey="amount" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
     </div>
   );
 }
