@@ -15,6 +15,7 @@ import {
   postSalary,
   revertLastAllowance,
   revertSalary,
+  type DriverLeaveEntry,
   setDriverLeaveDates,
   setPayrollPeriod,
   type MonthlyPayrollRow,
@@ -37,6 +38,21 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
 type Tab = 'allowance' | 'monthly' | 'inactive';
+
+function renderLeaveDaysCell(row: MonthlyPayrollRow) {
+  if (row.leaveDays <= 0) return '0';
+  return (
+    <span
+      className="text-red-600"
+      title={row.salaryLeaveDays > 0 ? `${row.salaryLeaveDays} day(s) deduct salary` : undefined}
+    >
+      {row.leaveDays}
+      {row.salaryLeaveDays > 0 && (
+        <span className="text-[10px] block text-red-500">{row.salaryLeaveDays}↓sal</span>
+      )}
+    </span>
+  );
+}
 
 export default function PayrollPage() {
   const today = new Date().toISOString().split('T')[0];
@@ -64,7 +80,8 @@ export default function PayrollPage() {
   const [posting, setPosting] = useState<string | null>(null);
   const [leaveDialog, setLeaveDialog] = useState<{
     row: MonthlyPayrollRow;
-    leaveDates: Set<string>;
+    leaveByDate: Map<string, boolean>;
+    deductNewLeaveFromSalary: boolean;
   } | null>(null);
   const [periodDialog, setPeriodDialog] = useState<{
     row: MonthlyPayrollRow;
@@ -85,7 +102,7 @@ export default function PayrollPage() {
       setInactiveDrivers(inactiveList);
       const inputs: Record<string, string> = {};
       for (const r of [...data, ...inactiveData]) {
-        inputs[r.driver.name] = r.salaryPaid > 0 ? String(r.salaryPaid) : String(r.salaryDefault);
+        inputs[r.driver.name] = r.salaryPaid > 0 ? String(r.salaryPaid) : String(r.salaryDue);
       }
       setSalaryInputs(inputs);
     } catch {
@@ -224,7 +241,7 @@ export default function PayrollPage() {
   }
 
   function openLeaveDialog(row: MonthlyPayrollRow) {
-    setLeaveDialog({ row, leaveDates: new Set() });
+    setLeaveDialog({ row, leaveByDate: new Map(), deductNewLeaveFromSalary: false });
     loadLeaveDatesForDialog(row);
   }
 
@@ -232,23 +249,44 @@ export default function PayrollPage() {
     const { from, to } = getMonthBounds(selectedMonth);
     const { data } = await supabase
       .from('driver_leave')
-      .select('date')
+      .select('date, deduct_salary')
       .eq('driver_name', row.driver.name)
       .gte('date', from)
       .lte('date', to);
+    const leaveByDate = new Map<string, boolean>();
+    for (const r of data || []) {
+      leaveByDate.set(r.date, !!r.deduct_salary);
+    }
+    const deductNewLeaveFromSalary =
+      leaveByDate.size > 0 && [...leaveByDate.values()].every(Boolean);
     setLeaveDialog({
       row,
-      leaveDates: new Set((data || []).map((r) => r.date)),
+      leaveByDate,
+      deductNewLeaveFromSalary,
     });
   }
 
   function toggleLeaveDate(date: string) {
     setLeaveDialog((prev) => {
       if (!prev) return prev;
-      const next = new Set(prev.leaveDates);
-      if (next.has(date)) next.delete(date);
-      else next.add(date);
-      return { ...prev, leaveDates: next };
+      const next = new Map(prev.leaveByDate);
+      if (!next.has(date)) {
+        next.set(date, prev.deductNewLeaveFromSalary);
+      } else if (!next.get(date)) {
+        next.set(date, true);
+      } else {
+        next.delete(date);
+      }
+      return { ...prev, leaveByDate: next };
+    });
+  }
+
+  function setDeductNewLeaveFromSalary(checked: boolean) {
+    setLeaveDialog((prev) => {
+      if (!prev) return prev;
+      const next = new Map(prev.leaveByDate);
+      for (const date of next.keys()) next.set(date, checked);
+      return { ...prev, leaveByDate: next, deductNewLeaveFromSalary: checked };
     });
   }
 
@@ -256,10 +294,13 @@ export default function PayrollPage() {
     if (!leaveDialog) return;
     setPosting('leave');
     try {
+      const leaveEntries: DriverLeaveEntry[] = [...leaveDialog.leaveByDate.entries()].map(
+        ([date, deduct_salary]) => ({ date, deduct_salary }),
+      );
       await setDriverLeaveDates(
         leaveDialog.row.driver,
         selectedMonth,
-        [...leaveDialog.leaveDates],
+        leaveEntries,
         {
           driver_name: leaveDialog.row.driver.name,
           month: selectedMonth,
@@ -451,13 +492,7 @@ export default function PayrollPage() {
                         </button>
                       </TableCell>
                       <TableCell className="text-right">{row.workingDays}</TableCell>
-                      <TableCell className="text-right">
-                        {row.leaveDays > 0 ? (
-                          <span className="text-red-600">{row.leaveDays}</span>
-                        ) : (
-                          '0'
-                        )}
-                      </TableCell>
+                      <TableCell className="text-right">{renderLeaveDaysCell(row)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(row.allowanceDue)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(row.allowancePaid)}</TableCell>
                       <TableCell className={cn(
@@ -521,7 +556,7 @@ export default function PayrollPage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Monthly summary — {monthLabel}</CardTitle>
             <p className="text-xs text-gray-500">
-              Total due = salary + allowance due (working days so far × daily rate for the current month). Balance = total due − allowance paid − advances − salary paid.
+              Total due = salary (reduced if leave deducts salary) + allowance due. Balance = total due − allowance paid − advances − salary paid.
             </p>
           </CardHeader>
           <CardContent className="p-0 overflow-x-auto">
@@ -566,7 +601,7 @@ export default function PayrollPage() {
                         </button>
                       </TableCell>
                       <TableCell className="text-right">{row.workingDays}</TableCell>
-                      <TableCell className="text-right">{row.leaveDays}</TableCell>
+                      <TableCell className="text-right">{renderLeaveDaysCell(row)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(row.allowanceDue)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(row.allowancePaid)}</TableCell>
                       <TableCell className="text-right text-red-600">{formatCurrency(row.advancePaid)}</TableCell>
@@ -586,6 +621,9 @@ export default function PayrollPage() {
                             <Check className="h-4 w-4 text-green-600 shrink-0" />
                           )}
                         </div>
+                        {row.salaryDue < row.salaryDefault && row.salaryPaid === 0 && (
+                          <p className="text-[10px] text-gray-500 mt-0.5">was {formatCurrency(row.salaryDefault)}</p>
+                        )}
                       </TableCell>
                       <TableCell className={cn(
                         'text-right font-medium',
@@ -743,7 +781,7 @@ export default function PayrollPage() {
                           </button>
                         </TableCell>
                         <TableCell className="text-right">{row.workingDays}</TableCell>
-                        <TableCell className="text-right">{row.leaveDays}</TableCell>
+                        <TableCell className="text-right">{renderLeaveDaysCell(row)}</TableCell>
                         <TableCell className="text-right">{formatCurrency(row.allowanceDue)}</TableCell>
                         <TableCell className="text-right">{formatCurrency(row.allowancePaid)}</TableCell>
                         <TableCell className="text-right text-red-600">{formatCurrency(row.advancePaid)}</TableCell>
@@ -827,8 +865,17 @@ export default function PayrollPage() {
           {leaveDialog && (
             <div className="space-y-4">
               <p className="text-xs text-gray-500">
-                Click dates to toggle leave. Red = no ₹500 allowance that day. {monthLabel}
+                Click a date: leave (no allowance) → leave + salary deduct → working. Or use the checkbox to apply salary deduction to all leave days. {monthLabel}
               </p>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300"
+                  checked={leaveDialog.deductNewLeaveFromSalary}
+                  onChange={(e) => setDeductNewLeaveFromSalary(e.target.checked)}
+                />
+                Deduct from salary for marked leave days
+              </label>
               <div className="flex flex-wrap gap-1.5 max-h-64 overflow-y-auto">
                 {getEmploymentDaysInMonth(leaveDialog.row.driver, selectedMonth, {
                   driver_name: leaveDialog.row.driver.name,
@@ -836,7 +883,8 @@ export default function PayrollPage() {
                   start_date: leaveDialog.row.periodStart,
                   end_date: leaveDialog.row.periodEnd,
                 }, null).map((date) => {
-                  const isLeave = leaveDialog.leaveDates.has(date);
+                  const isLeave = leaveDialog.leaveByDate.has(date);
+                  const deductSalary = leaveDialog.leaveByDate.get(date) ?? false;
                   const dayNum = new Date(date + 'T12:00:00').getDate();
                   const dow = new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'short' });
                   return (
@@ -846,25 +894,34 @@ export default function PayrollPage() {
                       onClick={() => toggleLeaveDate(date)}
                       className={cn(
                         'w-14 rounded-md border px-1 py-1.5 text-center text-xs transition-colors',
-                        isLeave
-                          ? 'border-red-300 bg-red-100 text-red-800'
-                          : 'border-gray-200 bg-white hover:bg-gray-50',
+                        isLeave && deductSalary
+                          ? 'border-red-600 bg-red-200 text-red-900'
+                          : isLeave
+                            ? 'border-red-300 bg-red-100 text-red-800'
+                            : 'border-gray-200 bg-white hover:bg-gray-50',
                       )}
                     >
                       <div className="font-medium">{dayNum}</div>
                       <div className="text-[10px] opacity-70">{dow}</div>
+                      {isLeave && deductSalary && (
+                        <div className="text-[9px] font-semibold text-red-700">−sal</div>
+                      )}
                     </button>
                   );
                 })}
               </div>
               <p className="text-sm text-gray-600">
-                {leaveDialog.leaveDates.size} leave day(s) ·{' '}
+                {leaveDialog.leaveByDate.size} leave day(s)
+                {[...leaveDialog.leaveByDate.values()].filter(Boolean).length > 0 && (
+                  <> · {[...leaveDialog.leaveByDate.values()].filter(Boolean).length} deduct salary</>
+                )}
+                {' · '}
                 {getEmploymentDaysInMonth(leaveDialog.row.driver, selectedMonth, {
                   driver_name: leaveDialog.row.driver.name,
                   month: selectedMonth,
                   start_date: leaveDialog.row.periodStart,
                   end_date: leaveDialog.row.periodEnd,
-                }, null).length - leaveDialog.leaveDates.size} working day(s) in period
+                }, null).length - leaveDialog.leaveByDate.size} working day(s) in period
               </p>
               <Button className="w-full" disabled={posting === 'leave'} onClick={handleSaveLeave}>
                 Save leave

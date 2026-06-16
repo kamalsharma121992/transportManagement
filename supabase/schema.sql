@@ -606,9 +606,12 @@ CREATE TABLE IF NOT EXISTS driver_leave (
   driver_name TEXT NOT NULL REFERENCES drivers(name),
   date DATE NOT NULL,
   notes TEXT,
+  deduct_salary BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(driver_name, date)
 );
+
+ALTER TABLE driver_leave ADD COLUMN IF NOT EXISTS deduct_salary BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS idx_driver_leave_date ON driver_leave(date);
 CREATE INDEX IF NOT EXISTS idx_driver_leave_driver ON driver_leave(driver_name);

@@ -1,9 +1,20 @@
 import { supabase, type Driver, DRIVER_PAY_CATEGORIES, SALARY_CATEGORIES } from '@/lib/supabase';
 
+export type DriverLeaveEntry = {
+  date: string;
+  deduct_salary: boolean;
+};
+
+export type DriverLeaveByDriver = {
+  leaveDates: Set<string>;
+  salaryDeductDates: Set<string>;
+};
+
 export type MonthlyPayrollRow = {
   driver: Driver;
   workingDays: number;
   leaveDays: number;
+  salaryLeaveDays: number;
   periodStart: string;
   periodEnd: string;
   allowancePaid: number;
@@ -13,6 +24,7 @@ export type MonthlyPayrollRow = {
   advancePaid: number;
   salaryPaid: number;
   salaryDefault: number;
+  salaryDue: number;
   dailyRate: number;
   gross: number;
   balance: number;
@@ -25,11 +37,23 @@ export type DriverPayrollPeriod = {
   end_date: string | null;
 };
 
+/** Salary after optional leave deductions: monthly ÷ period days × unpaid leave days. */
+export function computeSalaryDue(
+  monthlySalary: number,
+  periodDays: number,
+  salaryDeductLeaveDays: number,
+): number {
+  if (salaryDeductLeaveDays <= 0 || periodDays <= 0) return monthlySalary;
+  const dailyRate = monthlySalary / periodDays;
+  return Math.max(0, Math.round(monthlySalary - salaryDeductLeaveDays * dailyRate));
+}
+
 /** Total payable for the month; optional salary override when not yet posted. */
 export function computePayrollTotals(
   row: Pick<
     MonthlyPayrollRow,
     | 'salaryDefault'
+    | 'salaryDue'
     | 'salaryPaid'
     | 'allowanceDue'
     | 'allowancePaid'
@@ -37,10 +61,11 @@ export function computePayrollTotals(
   >,
   salaryOverride?: number,
 ): { salaryForMonth: number; gross: number; balance: number } {
+  const baseSalary = row.salaryDue;
   const salaryForMonth =
     row.salaryPaid > 0
       ? row.salaryPaid
-      : (salaryOverride != null && salaryOverride > 0 ? salaryOverride : row.salaryDefault);
+      : (salaryOverride != null && salaryOverride > 0 ? salaryOverride : baseSalary);
   const gross = salaryForMonth + row.allowanceDue;
   const balance = gross - row.allowancePaid - row.advancePaid - row.salaryPaid;
   return { salaryForMonth, gross, balance };
@@ -194,20 +219,24 @@ function normalizeDriver(d: Record<string, unknown>): Driver {
   };
 }
 
-export async function fetchLeaveDatesForMonth(month: string): Promise<Map<string, Set<string>>> {
+export async function fetchLeaveForMonth(month: string): Promise<Map<string, DriverLeaveByDriver>> {
   const { from, to } = getMonthBounds(month);
   const { data, error } = await supabase
     .from('driver_leave')
-    .select('driver_name, date')
+    .select('driver_name, date, deduct_salary')
     .gte('date', from)
     .lte('date', to);
 
-  const map = new Map<string, Set<string>>();
+  const map = new Map<string, DriverLeaveByDriver>();
   if (error) return map;
 
   for (const row of data || []) {
-    if (!map.has(row.driver_name)) map.set(row.driver_name, new Set());
-    map.get(row.driver_name)!.add(row.date);
+    if (!map.has(row.driver_name)) {
+      map.set(row.driver_name, { leaveDates: new Set(), salaryDeductDates: new Set() });
+    }
+    const entry = map.get(row.driver_name)!;
+    entry.leaveDates.add(row.date);
+    if (row.deduct_salary) entry.salaryDeductDates.add(row.date);
   }
   return map;
 }
@@ -215,11 +244,11 @@ export async function fetchLeaveDatesForMonth(month: string): Promise<Map<string
 export async function setDriverLeaveDates(
   driver: Driver,
   month: string,
-  leaveDates: string[],
+  leaveEntries: DriverLeaveEntry[],
   period?: DriverPayrollPeriod | null,
 ): Promise<void> {
-  const employmentDays = new Set(getEmploymentDaysInMonth(driver, month, period));
-  const validLeave = leaveDates.filter((d) => employmentDays.has(d));
+  const employmentDays = new Set(getEmploymentDaysInMonth(driver, month, period, null));
+  const validLeave = leaveEntries.filter((e) => employmentDays.has(e.date));
   const { from, to } = getMonthBounds(month);
 
   const { error: delError } = await supabase
@@ -234,7 +263,13 @@ export async function setDriverLeaveDates(
 
   const { error: insError } = await supabase
     .from('driver_leave')
-    .insert(validLeave.map((date) => ({ driver_name: driver.name, date })));
+    .insert(
+      validLeave.map((e) => ({
+        driver_name: driver.name,
+        date: e.date,
+        deduct_salary: e.deduct_salary,
+      })),
+    );
   if (insError) throw insError;
 }
 
@@ -255,7 +290,7 @@ function buildPayrollRows(
   drivers: Driver[],
   month: string,
   periodByDriver: Map<string, DriverPayrollPeriod>,
-  leaveByDriver: Map<string, Set<string>>,
+  leaveByDriver: Map<string, DriverLeaveByDriver>,
   allowanceByDriver: Map<string, number>,
   advanceByDriver: Map<string, number>,
   salaryByDriver: Map<string, number>,
@@ -267,19 +302,22 @@ function buildPayrollRows(
     const allowanceEmploymentDays = getEmploymentDaysInMonth(driver, month, period, asOf);
     const periodStart = fullEmploymentDays[0] ?? getDefaultPeriodStart(driver, month);
     const periodEnd = fullEmploymentDays[fullEmploymentDays.length - 1] ?? getDefaultPeriodEnd(driver, month);
-    const leaveDates = leaveByDriver.get(driver.name) ?? new Set<string>();
-    const leaveDays = allowanceEmploymentDays.filter((d) => leaveDates.has(d)).length;
+    const leaveInfo = leaveByDriver.get(driver.name) ?? { leaveDates: new Set(), salaryDeductDates: new Set() };
+    const leaveDays = allowanceEmploymentDays.filter((d) => leaveInfo.leaveDates.has(d)).length;
+    const salaryLeaveDays = fullEmploymentDays.filter((d) => leaveInfo.salaryDeductDates.has(d)).length;
     const workingDays = allowanceEmploymentDays.length - leaveDays;
     const allowancePaid = allowanceByDriver.get(driver.name) || 0;
     const advancePaid = advanceByDriver.get(driver.name) || 0;
     const salaryPaid = salaryByDriver.get(driver.name) || 0;
     const salaryDefault = driver.monthly_salary ?? 25000;
+    const salaryDue = computeSalaryDue(salaryDefault, fullEmploymentDays.length, salaryLeaveDays);
     const dailyRate = driver.daily_allowance ?? 500;
     const allowanceDue = workingDays * dailyRate;
     const allowanceShortfall = Math.max(0, allowanceDue - allowancePaid);
     const daysShortfall = dailyRate > 0 ? Math.ceil(allowanceShortfall / dailyRate) : 0;
     const { gross, balance } = computePayrollTotals({
       salaryDefault,
+      salaryDue,
       salaryPaid,
       allowanceDue,
       allowancePaid,
@@ -290,6 +328,7 @@ function buildPayrollRows(
       driver,
       workingDays,
       leaveDays,
+      salaryLeaveDays,
       periodStart,
       periodEnd,
       allowancePaid,
@@ -299,6 +338,7 @@ function buildPayrollRows(
       advancePaid,
       salaryPaid,
       salaryDefault,
+      salaryDue,
       dailyRate,
       gross,
       balance,
@@ -358,7 +398,7 @@ export async function fetchMonthlyPayroll(month: string): Promise<MonthlyPayroll
       d.status === 'active'
       && isDriverActiveInMonth(d, month, periodByDriver.get(d.name)),
   );
-  const leaveByDriver = await fetchLeaveDatesForMonth(month);
+  const leaveByDriver = await fetchLeaveForMonth(month);
   const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month);
 
   return buildPayrollRows(
@@ -375,7 +415,7 @@ export async function fetchMonthlyPayroll(month: string): Promise<MonthlyPayroll
 export async function fetchInactivePayroll(month: string): Promise<MonthlyPayrollRow[]> {
   const allDrivers = await fetchDrivers();
   const periodByDriver = await fetchPayrollPeriods(month);
-  const leaveByDriver = await fetchLeaveDatesForMonth(month);
+  const leaveByDriver = await fetchLeaveForMonth(month);
   const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month);
 
   const drivers = allDrivers.filter((d) => {
