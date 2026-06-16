@@ -15,6 +15,7 @@ import {
 import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
+import { PageHeader } from '@/components/page-header';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 
@@ -468,7 +469,7 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Admin</h1>
+      <PageHeader title="Admin" />
 
       <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
         {tabs.map(t => (

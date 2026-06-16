@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase, JM_PARTNERS } from '@/lib/supabase';
 import { formatCurrency, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageHeader } from '@/components/page-header';
 import { Input } from '@/components/ui/input';
 import {
   TrendingUp,
@@ -12,7 +13,6 @@ import {
   Wallet,
   ChevronDown,
   ChevronUp,
-  X,
 } from 'lucide-react';
 import {
   BarChart,
@@ -44,6 +44,8 @@ export default function Dashboard() {
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [partners, setPartners] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const hasLoadedRef = useRef(false);
   const [showFilters, setShowFilters] = useState(false);
 
   // Filters — default to current month
@@ -83,7 +85,22 @@ export default function Dashboard() {
 
 
   useEffect(() => {
+    supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
+      setVehicles((data || []).map((v: any) => v.vehicle_number));
+    });
+    supabase.from('partners').select('name').order('name').then(({ data }) => {
+      setPartners((data || []).map((p: any) => p.name));
+    });
+  }, []);
+
+  useEffect(() => {
     async function fetchData() {
+      if (hasLoadedRef.current) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
       // Build trip query
       let tripQuery = supabase.from('trips').select('*');
       if (filterVehicle) tripQuery = tripQuery.eq('vehicle_number', filterVehicle);
@@ -125,16 +142,10 @@ export default function Dashboard() {
       const allExpFromRevenue = (allE || []).filter((r: any) => r.payment_source === 'Revenue').reduce((s: number, r: any) => s + Number(r.amount), 0);
       const capPaidFromRevenue = (c || []).filter((r: any) => r.status === 'Paid' && r.payment_source === 'Revenue').reduce((s: number, r: any) => s + Number(r.value), 0);
       setCashData({ allRevenue, allExpFromRevenue, capPaidFromRevenue });
+      hasLoadedRef.current = true;
       setLoading(false);
+      setRefreshing(false);
     }
-
-    // Load master data once
-    supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
-      setVehicles((data || []).map((v: any) => v.vehicle_number));
-    });
-    supabase.from('partners').select('name').order('name').then(({ data }) => {
-      setPartners((data || []).map((p: any) => p.name));
-    });
 
     fetchData();
   }, [filterMonth, filterDateFrom, filterDateTo, filterPaidBy, filterPaidByPerson, filterPerson, filterVehicle, filterPaymentSource]);
@@ -185,37 +196,22 @@ export default function Dashboard() {
     .map(([vehicle, amount]) => ({ vehicle, amount }))
     .sort((a, b) => b.amount - a.amount);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
-      <div>
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          {hasActiveFilters && (
-            <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">
-              <X className="h-3 w-3" /> Reset to current month
-            </button>
-          )}
-        </div>
-        {activeFilterLabels.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {activeFilterLabels.map((label) => (
-              <span key={label} className="px-2 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full">
-                {label}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+      <PageHeader
+        title="Dashboard"
+        hasActiveFilters={!!hasActiveFilters}
+        onClearFilters={clearFilters}
+        clearFiltersLabel="Reset to current month"
+        filterLabels={activeFilterLabels}
+      />
 
-      {/* Advanced Filters */}
+      {loading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+        </div>
+      ) : (
+      <div className={`space-y-6 transition-opacity ${refreshing ? 'opacity-60 pointer-events-none' : ''}`}>
       <div className="space-y-2">
         <button onClick={() => setShowFilters(!showFilters)}
           className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900 font-medium">
@@ -444,6 +440,8 @@ export default function Dashboard() {
           </ResponsiveContainer>
         </CardContent>
       </Card>
+      </div>
+      )}
     </div>
   );
 }

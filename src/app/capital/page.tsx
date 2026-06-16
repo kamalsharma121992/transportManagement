@@ -16,8 +16,11 @@ import {
 import { Plus, Pencil, Trash2, CheckCircle2, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
+import { PageHeader } from '@/components/page-header';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
+import { buildTextSearchFilter, CAPITAL_SEARCH_COLUMNS } from '@/lib/search';
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -42,6 +45,8 @@ export default function CapitalPage() {
   const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterContributor, setFilterContributor] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const searchQuery = useDebouncedValue(searchInput);
   const [summary, setSummary] = useState({
     total: 0,
     paidTotal: 0,
@@ -57,21 +62,36 @@ export default function CapitalPage() {
     totalItems: totalContributionsCount,
     setTotalItems: setTotalContributionsCount,
     totalPages,
-  } = useServerPagination([filterStatus, filterContributor]);
+  } = useServerPagination([filterStatus, filterContributor, searchQuery]);
+
+  function applyCapitalFilters<Q>(query: Q): Q {
+    let q = query as {
+      eq: (col: string, val: string) => typeof q;
+      or: (filter: string) => typeof q;
+    };
+    if (filterStatus) q = q.eq('status', filterStatus);
+    if (filterContributor) q = q.eq('contributor', filterContributor);
+    const searchFilter = buildTextSearchFilter([...CAPITAL_SEARCH_COLUMNS], searchQuery);
+    if (searchFilter) q = q.or(searchFilter);
+    return q as Q;
+  }
 
   async function fetchData() {
     setLoading(true);
     const { from, to } = getSupabaseRange(page, pageSize);
 
-    let listQuery = supabase.from('capital_contributions').select('*', { count: 'exact' }).order('date', { ascending: false });
-    if (filterStatus) listQuery = listQuery.eq('status', filterStatus);
-    if (filterContributor) listQuery = listQuery.eq('contributor', filterContributor);
-    const { data, count } = await listQuery.range(from, to);
+    const listQuery = applyCapitalFilters(
+      supabase.from('capital_contributions').select('*', { count: 'exact' }).order('date', { ascending: false }),
+    );
+    const { data, count, error } = await listQuery.range(from, to);
 
-    let summaryQuery = supabase.from('capital_contributions').select('value, status, contributor');
-    if (filterStatus) summaryQuery = summaryQuery.eq('status', filterStatus);
-    if (filterContributor) summaryQuery = summaryQuery.eq('contributor', filterContributor);
-    const { data: summaryRows } = await summaryQuery;
+    const summaryQuery = applyCapitalFilters(
+      supabase.from('capital_contributions').select('value, status, contributor'),
+    );
+    const { data: summaryRows, error: summaryError } = await summaryQuery;
+
+    if (error) { toast.error('Failed to load contributions: ' + error.message); setLoading(false); return; }
+    if (summaryError) { toast.error('Failed to load summary: ' + summaryError.message); }
 
     const contributorTotals: Record<string, { total: number; paid: number; unpaid: number }> = {};
     (summaryRows || []).forEach((c) => {
@@ -93,7 +113,7 @@ export default function CapitalPage() {
     setLoading(false);
   }
 
-  useEffect(() => { fetchData(); }, [page, pageSize, filterStatus, filterContributor]);
+  useEffect(() => { fetchData(); }, [page, pageSize, filterStatus, filterContributor, searchQuery]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -172,11 +192,26 @@ export default function CapitalPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">Capital Contributions</h1>
-        <Button onClick={() => { setEditingId(null); setForm(emptyForm); setDialogOpen(true); }}>
-          <Plus className="h-4 w-4 mr-2" /> Add Contribution
-        </Button>
+      <PageHeader
+        title="Capital Contributions"
+        search={{
+          value: searchInput,
+          onChange: setSearchInput,
+          placeholder: 'Search contributor, description...',
+        }}
+        hasActiveFilters={!!filterStatus || !!filterContributor || !!searchQuery}
+        onClearFilters={() => { setFilterStatus(''); setFilterContributor(''); setSearchInput(''); }}
+        filterLabels={[
+          ...(filterStatus ? [`Status: ${filterStatus}`] : []),
+          ...(filterContributor ? [`Contributor: ${filterContributor}`] : []),
+          ...(searchQuery ? [`Search: ${searchQuery}`] : []),
+        ]}
+        actions={
+          <Button onClick={() => { setEditingId(null); setForm(emptyForm); setDialogOpen(true); }}>
+            <Plus className="h-4 w-4 mr-2" /> Add Contribution
+          </Button>
+        }
+      />
 
         {/* Add/Edit Dialog */}
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setEditingId(null); setForm(emptyForm); } }}>
@@ -244,7 +279,6 @@ export default function CapitalPage() {
             </form>
           </DialogContent>
         </Dialog>
-      </div>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

@@ -14,8 +14,11 @@ import { Badge } from '@/components/ui/badge';
 import { Plus, Pencil, Trash2, Truck, Car } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
+import { PageHeader } from '@/components/page-header';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
+import { buildTextSearchFilter, VEHICLE_SEARCH_COLUMNS } from '@/lib/search';
 
 const emptyForm = {
   vehicle_number: '',
@@ -35,6 +38,8 @@ export default function VehiclesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [searchInput, setSearchInput] = useState('');
+  const searchQuery = useDebouncedValue(searchInput);
 
   const {
     page,
@@ -44,15 +49,21 @@ export default function VehiclesPage() {
     totalItems: totalVehicles,
     setTotalItems: setTotalVehicles,
     totalPages,
-  } = useServerPagination();
+  } = useServerPagination([searchQuery]);
 
   async function fetchVehicles() {
     setLoading(true);
     const { from, to } = getSupabaseRange(page, pageSize);
-    const [{ data: veh, count }, { data: bank }] = await Promise.all([
-      supabase.from('vehicles').select('*', { count: 'exact' }).order('vehicle_number').range(from, to),
+
+    let vehQuery = supabase.from('vehicles').select('*', { count: 'exact' }).order('vehicle_number');
+    const searchFilter = buildTextSearchFilter([...VEHICLE_SEARCH_COLUMNS], searchQuery);
+    if (searchFilter) vehQuery = vehQuery.or(searchFilter);
+
+    const [{ data: veh, count, error }, { data: bank }] = await Promise.all([
+      vehQuery.range(from, to),
       supabase.from('banking_information').select('*'),
     ]);
+    if (error) { toast.error('Failed to load vehicles: ' + error.message); setLoading(false); return; }
     setVehicles(veh || []);
     setTotalVehicles(count ?? 0);
     setBanking(bank || []);
@@ -61,7 +72,7 @@ export default function VehiclesPage() {
 
   useEffect(() => {
     fetchVehicles();
-  }, [page, pageSize]);
+  }, [page, pageSize, searchQuery]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -112,9 +123,20 @@ export default function VehiclesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Vehicles</h1>
-        <Button onClick={() => setDialogOpen(true)}><Plus className="h-4 w-4 mr-2" /> Add Vehicle</Button>
+      <PageHeader
+        title="Vehicles"
+        search={{
+          value: searchInput,
+          onChange: setSearchInput,
+          placeholder: 'Search vehicle number, model, chassis...',
+        }}
+        hasActiveFilters={!!searchQuery}
+        onClearFilters={() => setSearchInput('')}
+        filterLabels={searchQuery ? [`Search: ${searchQuery}`] : []}
+        actions={
+          <Button onClick={() => setDialogOpen(true)}><Plus className="h-4 w-4 mr-2" /> Add Vehicle</Button>
+        }
+      />
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setEditingId(null); setForm(emptyForm); } }}>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -162,7 +184,6 @@ export default function VehiclesPage() {
             </form>
           </DialogContent>
         </Dialog>
-      </div>
 
       {/* Vehicle Cards */}
       <div className="space-y-4">

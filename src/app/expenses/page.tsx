@@ -17,8 +17,11 @@ import { Badge } from '@/components/ui/badge';
 import { Plus, Pencil, Trash2, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
+import { PageHeader } from '@/components/page-header';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
+import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS } from '@/lib/search';
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -76,6 +79,8 @@ export default function ExpensesPage() {
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterMonth, setFilterMonth] = useState(currentMonth);
+  const [searchInput, setSearchInput] = useState('');
+  const searchQuery = useDebouncedValue(searchInput);
   const [summary, setSummary] = useState({ total: 0, jmTotal: 0, maheshTotal: 0 });
 
   const {
@@ -88,48 +93,53 @@ export default function ExpensesPage() {
     totalPages,
   } = useServerPagination([
     filterType, filterVehicle, filterCategory, filterPerson,
-    filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth,
+    filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth, searchQuery,
   ]);
+
+  function applyExpenseFilters<Q>(query: Q): Q {
+    let q = query as {
+      eq: (col: string, val: string) => typeof q;
+      gte: (col: string, val: string) => typeof q;
+      lte: (col: string, val: string) => typeof q;
+      or: (filter: string) => typeof q;
+    };
+    if (filterType) q = q.eq('expense_type', filterType);
+    if (filterVehicle) q = q.eq('vehicle_number', filterVehicle);
+    if (filterCategory) q = q.eq('category', filterCategory);
+    if (filterPerson) q = q.eq('person', filterPerson);
+    if (filterPaidByPerson) q = q.eq('paid_by_person', filterPaidByPerson);
+    if (filterPaidBy) q = q.eq('paid_by', filterPaidBy);
+    const isSearching = searchQuery.trim().length > 0;
+    if (!isSearching) {
+      if (filterMonth) {
+        const [y, m] = filterMonth.split('-');
+        const start = `${y}-${m}-01`;
+        const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
+        q = q.gte('date', start).lte('date', end);
+      } else {
+        if (filterDateFrom) q = q.gte('date', filterDateFrom);
+        if (filterDateTo) q = q.lte('date', filterDateTo);
+      }
+    }
+    const searchFilter = buildTextSearchFilter([...EXPENSE_SEARCH_COLUMNS], searchQuery);
+    if (searchFilter) q = q.or(searchFilter);
+    return q as Q;
+  }
 
   async function fetchExpenses() {
     setLoading(true);
     const { from, to } = getSupabaseRange(page, pageSize);
 
-    let listQuery = supabase.from('expenses').select('*', { count: 'exact' }).order('date', { ascending: false });
-    if (filterType) listQuery = listQuery.eq('expense_type', filterType);
-    if (filterVehicle) listQuery = listQuery.eq('vehicle_number', filterVehicle);
-    if (filterCategory) listQuery = listQuery.eq('category', filterCategory);
-    if (filterPerson) listQuery = listQuery.eq('person', filterPerson);
-    if (filterPaidByPerson) listQuery = listQuery.eq('paid_by_person', filterPaidByPerson);
-    if (filterPaidBy) listQuery = listQuery.eq('paid_by', filterPaidBy);
-    if (filterMonth) {
-      const [y, m] = filterMonth.split('-');
-      const start = `${y}-${m}-01`;
-      const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
-      listQuery = listQuery.gte('date', start).lte('date', end);
-    } else {
-      if (filterDateFrom) listQuery = listQuery.gte('date', filterDateFrom);
-      if (filterDateTo) listQuery = listQuery.lte('date', filterDateTo);
-    }
-    const { data, count } = await listQuery.range(from, to);
+    const listQuery = applyExpenseFilters(
+      supabase.from('expenses').select('*', { count: 'exact' }).order('date', { ascending: false }),
+    );
+    const { data, count, error } = await listQuery.range(from, to);
 
-    let summaryQuery = supabase.from('expenses').select('amount, paid_by');
-    if (filterType) summaryQuery = summaryQuery.eq('expense_type', filterType);
-    if (filterVehicle) summaryQuery = summaryQuery.eq('vehicle_number', filterVehicle);
-    if (filterCategory) summaryQuery = summaryQuery.eq('category', filterCategory);
-    if (filterPerson) summaryQuery = summaryQuery.eq('person', filterPerson);
-    if (filterPaidByPerson) summaryQuery = summaryQuery.eq('paid_by_person', filterPaidByPerson);
-    if (filterPaidBy) summaryQuery = summaryQuery.eq('paid_by', filterPaidBy);
-    if (filterMonth) {
-      const [y, m] = filterMonth.split('-');
-      const start = `${y}-${m}-01`;
-      const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
-      summaryQuery = summaryQuery.gte('date', start).lte('date', end);
-    } else {
-      if (filterDateFrom) summaryQuery = summaryQuery.gte('date', filterDateFrom);
-      if (filterDateTo) summaryQuery = summaryQuery.lte('date', filterDateTo);
-    }
-    const { data: summaryRows } = await summaryQuery;
+    const summaryQuery = applyExpenseFilters(supabase.from('expenses').select('amount, paid_by'));
+    const { data: summaryRows, error: summaryError } = await summaryQuery;
+
+    if (error) { toast.error('Failed to load expenses: ' + error.message); setLoading(false); return; }
+    if (summaryError) { toast.error('Failed to load expense summary: ' + summaryError.message); }
 
     setExpenses(data || []);
     setTotalExpenses(count ?? 0);
@@ -141,17 +151,20 @@ export default function ExpensesPage() {
     setLoading(false);
   }
 
-  const hasActiveFilters = filterMonth !== currentMonth || filterType || filterVehicle || filterCategory || filterPerson || filterPaidByPerson || filterPaidBy || filterDateFrom || filterDateTo;
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterType || !!filterVehicle || !!filterCategory || !!filterPerson || !!filterPaidByPerson || !!filterPaidBy || !!filterDateFrom || !!filterDateTo || !!searchQuery;
 
   function clearFilters() {
     setFilterType(''); setFilterVehicle(''); setFilterCategory('');
     setFilterPerson(''); setFilterPaidByPerson(''); setFilterPaidBy('');
     setFilterDateFrom(''); setFilterDateTo(''); setFilterMonth(currentMonth);
+    setSearchInput('');
   }
 
   // Active filter labels
   const activeFilterLabels: string[] = [];
-  if (filterMonth) {
+  if (searchQuery) {
+    activeFilterLabels.push('All dates (search)');
+  } else if (filterMonth) {
     const d = new Date(filterMonth + '-01');
     activeFilterLabels.push(d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }));
   } else if (!filterDateFrom && !filterDateTo) {
@@ -165,10 +178,11 @@ export default function ExpensesPage() {
   if (filterPerson) activeFilterLabels.push('Given to: ' + filterPerson);
   if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
   if (filterCategory) activeFilterLabels.push('Category: ' + filterCategory);
+  if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   useEffect(() => {
     fetchExpenses();
-  }, [page, pageSize, filterType, filterVehicle, filterCategory, filterPerson, filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth]);
+  }, [page, pageSize, filterType, filterVehicle, filterCategory, filterPerson, filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth, searchQuery]);
 
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
@@ -263,27 +277,20 @@ export default function ExpensesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-gray-900">Expenses</h1>
-            {hasActiveFilters && (
-              <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">
-                <X className="h-3 w-3" /> Reset
-              </button>
-            )}
-          </div>
-          {activeFilterLabels.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-1.5">
-              {activeFilterLabels.map((label) => (
-                <span key={label} className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs font-medium rounded-full">
-                  {label}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-        <Button onClick={() => setDialogOpen(true)}><Plus className="h-4 w-4 mr-2" /> Add Expense</Button>
+      <PageHeader
+        title="Expenses"
+        search={{
+          value: searchInput,
+          onChange: setSearchInput,
+          placeholder: 'Search description, category, vehicle...',
+        }}
+        hasActiveFilters={hasActiveFilters}
+        onClearFilters={clearFilters}
+        filterLabels={activeFilterLabels}
+        actions={
+          <Button onClick={() => setDialogOpen(true)}><Plus className="h-4 w-4 mr-2" /> Add Expense</Button>
+        }
+      />
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setEditingId(null); setForm(emptyForm); } }}>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -387,7 +394,6 @@ export default function ExpensesPage() {
             </form>
           </DialogContent>
         </Dialog>
-      </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
