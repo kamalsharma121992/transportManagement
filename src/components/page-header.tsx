@@ -1,7 +1,10 @@
 'use client';
 
-import { X } from 'lucide-react';
+import Link from 'next/link';
+import { Plus, X } from 'lucide-react';
 import { TextSearchInput } from '@/components/text-search-input';
+import { buttonVariants } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 type PageHeaderProps = {
   title: string;
@@ -53,9 +56,13 @@ export function PageHeader({
           </div>
         )}
 
-        {actions && (
-          <div className="flex items-center gap-2 shrink-0 sm:ml-auto">{actions}</div>
-        )}
+        <div className="flex items-center gap-2 shrink-0 sm:ml-auto">
+          <Link href="/expenses?add=1" className={cn(buttonVariants())}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Expense
+          </Link>
+          {actions}
+        </div>
       </div>
 
       {filterLabels.length > 0 && (

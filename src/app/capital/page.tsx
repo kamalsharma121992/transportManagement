@@ -21,6 +21,9 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 import { buildTextSearchFilter, CAPITAL_SEARCH_COLUMNS } from '@/lib/search';
+import { applySupabaseSort } from '@/lib/sort';
+import { useTableSort } from '@/hooks/use-table-sort';
+import { SortableTableHead } from '@/components/sortable-table-head';
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -47,6 +50,7 @@ export default function CapitalPage() {
   const [filterContributor, setFilterContributor] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput);
+  const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
   const [summary, setSummary] = useState({
     total: 0,
     paidTotal: 0,
@@ -62,7 +66,7 @@ export default function CapitalPage() {
     totalItems: totalContributionsCount,
     setTotalItems: setTotalContributionsCount,
     totalPages,
-  } = useServerPagination([filterStatus, filterContributor, searchQuery]);
+  } = useServerPagination([filterStatus, filterContributor, searchQuery, sortColumn, sortDirection]);
 
   function applyCapitalFilters<Q>(query: Q): Q {
     let q = query as {
@@ -80,8 +84,12 @@ export default function CapitalPage() {
     setLoading(true);
     const { from, to } = getSupabaseRange(page, pageSize);
 
-    const listQuery = applyCapitalFilters(
-      supabase.from('capital_contributions').select('*', { count: 'exact' }).order('date', { ascending: false }),
+    const listQuery = applySupabaseSort(
+      applyCapitalFilters(
+        supabase.from('capital_contributions').select('*', { count: 'exact' }),
+      ),
+      sortColumn,
+      sortDirection,
     );
     const { data, count, error } = await listQuery.range(from, to);
 
@@ -113,7 +121,7 @@ export default function CapitalPage() {
     setLoading(false);
   }
 
-  useEffect(() => { fetchData(); }, [page, pageSize, filterStatus, filterContributor, searchQuery]);
+  useEffect(() => { fetchData(); }, [page, pageSize, filterStatus, filterContributor, searchQuery, sortColumn, sortDirection]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -354,15 +362,15 @@ export default function CapitalPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Date</TableHead>
+                  <SortableTableHead label="Date" column="date" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} />
                   <TableHead>Contributor</TableHead>
                   <TableHead>Type</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
+                  <SortableTableHead label="Amount" column="value" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
                   <TableHead>Description</TableHead>
                   <TableHead>Card/Asset</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Paid From</TableHead>
-                  <TableHead>Paid Date</TableHead>
+                  <SortableTableHead label="Paid Date" column="paid_date" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} />
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>

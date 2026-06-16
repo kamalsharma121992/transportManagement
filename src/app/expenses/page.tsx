@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase, Expense, ExpenseType, EXPENSE_TYPES, CATEGORIES_BY_TYPE, ALL_CATEGORIES, JM_PARTNERS, PAYMENT_SOURCES } from '@/lib/supabase';
 import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,7 +15,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Pencil, Trash2, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -22,6 +23,9 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS } from '@/lib/search';
+import { applySupabaseSort } from '@/lib/sort';
+import { useTableSort } from '@/hooks/use-table-sort';
+import { SortableTableHead } from '@/components/sortable-table-head';
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -59,6 +63,8 @@ const categoryColor: Record<string, string> = {
 };
 
 export default function ExpensesPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [partners, setPartners] = useState<string[]>([]);
@@ -81,6 +87,7 @@ export default function ExpensesPage() {
   const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput);
+  const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
   const [summary, setSummary] = useState({ total: 0, jmTotal: 0, maheshTotal: 0 });
 
   const {
@@ -94,6 +101,7 @@ export default function ExpensesPage() {
   } = useServerPagination([
     filterType, filterVehicle, filterCategory, filterPerson,
     filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth, searchQuery,
+    sortColumn, sortDirection,
   ]);
 
   function applyExpenseFilters<Q>(query: Q): Q {
@@ -127,8 +135,12 @@ export default function ExpensesPage() {
     setLoading(true);
     const { from, to } = getSupabaseRange(page, pageSize);
 
-    const listQuery = applyExpenseFilters(
-      supabase.from('expenses').select('*', { count: 'exact' }).order('date', { ascending: false }),
+    const listQuery = applySupabaseSort(
+      applyExpenseFilters(
+        supabase.from('expenses').select('*', { count: 'exact' }),
+      ),
+      sortColumn,
+      sortDirection,
     );
     const { data, count, error } = await listQuery.range(from, to);
 
@@ -177,7 +189,16 @@ export default function ExpensesPage() {
 
   useEffect(() => {
     fetchExpenses();
-  }, [page, pageSize, filterType, filterVehicle, filterCategory, filterPerson, filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth, searchQuery]);
+  }, [page, pageSize, filterType, filterVehicle, filterCategory, filterPerson, filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
+
+  useEffect(() => {
+    if (searchParams.get('add') === '1') {
+      setEditingId(null);
+      setForm(emptyForm);
+      setDialogOpen(true);
+      router.replace('/expenses', { scroll: false });
+    }
+  }, [searchParams, router]);
 
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
@@ -282,9 +303,6 @@ export default function ExpensesPage() {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
         filterLabels={activeFilterLabels}
-        actions={
-          <Button onClick={() => setDialogOpen(true)}><Plus className="h-4 w-4 mr-2" /> Add Expense</Button>
-        }
       />
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setEditingId(null); setForm(emptyForm); } }}>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -514,11 +532,11 @@ export default function ExpensesPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Date</TableHead>
+                  <SortableTableHead label="Date" column="date" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} />
                   <TableHead>Type</TableHead>
                   <TableHead>Vehicle</TableHead>
                   <TableHead>Category</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
+                  <SortableTableHead label="Amount" column="amount" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
                   <TableHead>Description</TableHead>
                   <TableHead>Entity</TableHead>
                   <TableHead>Paid By</TableHead>

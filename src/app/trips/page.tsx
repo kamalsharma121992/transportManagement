@@ -36,6 +36,9 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 import { buildTextSearchFilter, TRIP_SEARCH_COLUMNS } from '@/lib/search';
+import { applySupabaseSort } from '@/lib/sort';
+import { useTableSort } from '@/hooks/use-table-sort';
+import { SortableTableHead } from '@/components/sortable-table-head';
 
 const emptyTrip: TripFormData = {
   date: new Date().toISOString().split('T')[0],
@@ -78,6 +81,7 @@ export default function TripsPage() {
   const [filterDriver, setFilterDriver] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput);
+  const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
   const [summary, setSummary] = useState({ count: 0, revenue: 0, weight: 0 });
 
   const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || !!filterVehicle || !!filterRoute || !!filterDriver || !!searchQuery;
@@ -116,6 +120,7 @@ export default function TripsPage() {
     totalPages,
   } = useServerPagination([
     filterMonth, filterDateFrom, filterDateTo, filterVehicle, filterRoute, filterDriver, searchQuery,
+    sortColumn, sortDirection,
   ]);
 
   function applyTripFilters<Q>(query: Q): Q {
@@ -146,8 +151,12 @@ export default function TripsPage() {
     setLoading(true);
     const { from, to } = getSupabaseRange(page, pageSize);
 
-    let listQuery = applyTripFilters(
-      supabase.from('trips').select('*', { count: 'exact' }).order('date', { ascending: false }),
+    let listQuery = applySupabaseSort(
+      applyTripFilters(
+        supabase.from('trips').select('*', { count: 'exact' }),
+      ),
+      sortColumn,
+      sortDirection,
     );
     const { data, count, error } = await listQuery.range(from, to);
 
@@ -169,7 +178,7 @@ export default function TripsPage() {
 
   useEffect(() => {
     fetchTrips();
-  }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicle, filterRoute, filterDriver, searchQuery]);
+  }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicle, filterRoute, filterDriver, searchQuery, sortColumn, sortDirection]);
 
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
@@ -758,13 +767,13 @@ export default function TripsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Date</TableHead>
+                  <SortableTableHead label="Date" column="date" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} />
                   <TableHead>Vehicle</TableHead>
                   <TableHead>Route</TableHead>
                   <TableHead>Driver</TableHead>
                   <TableHead className="text-right">Weight</TableHead>
                   <TableHead className="text-right">Rate/Ton</TableHead>
-                  <TableHead className="text-right">Revenue</TableHead>
+                  <SortableTableHead label="Revenue" column="total_revenue" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
