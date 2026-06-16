@@ -9,6 +9,7 @@ import {
   Route,
   Receipt,
   Landmark,
+  FileBarChart,
   Settings,
   LogOut,
   Menu,
@@ -23,6 +24,7 @@ const navItems = [
   { href: '/expenses', label: 'Expenses', icon: Receipt },
   { href: '/vehicles', label: 'Vehicles', icon: Truck },
   { href: '/capital', label: 'Capital', icon: Landmark },
+  { href: '/reports', label: 'Reports', icon: FileBarChart },
   { href: '/admin', label: 'Admin', icon: Settings },
 ];
 
