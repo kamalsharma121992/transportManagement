@@ -1,22 +1,20 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, JM_PARTNERS } from '@/lib/supabase';
 import { formatCurrency, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
+import {
+  type DashboardStats,
+  fetchDashboardStats,
+  getDashboardDateRange,
+  mergeDailySeries,
+} from '@/lib/dashboard-stats';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/page-header';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
-import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS, TRIP_SEARCH_COLUMNS } from '@/lib/search';
 import { Input } from '@/components/ui/input';
-import {
-  TrendingUp,
-  TrendingDown,
-  IndianRupee,
-  Wallet,
-  ChevronDown,
-  ChevronUp,
-} from 'lucide-react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
   BarChart,
   Bar,
@@ -39,11 +37,23 @@ const COLORS = [
   '#14b8a6', '#e11d48', '#a855f7',
 ];
 
+const emptyStats: DashboardStats = {
+  tripCount: 0,
+  totalRevenue: 0,
+  expenseCount: 0,
+  totalExpenses: 0,
+  jmTotal: 0,
+  maheshTotal: 0,
+  totalCapitalIn: 0,
+  cashAvailable: 0,
+  dailyTrips: [],
+  dailyExpenses: [],
+  categoryBreakdown: [],
+  vehicleExpenses: [],
+};
+
 export default function Dashboard() {
-  const [trips, setTrips] = useState<any[]>([]);
-  const [expenses, setExpenses] = useState<any[]>([]);
-  const [capital, setCapital] = useState<any[]>([]);
-  const [cashData, setCashData] = useState({ allRevenue: 0, allExpFromRevenue: 0, capPaidFromRevenue: 0 });
+  const [stats, setStats] = useState<DashboardStats>(emptyStats);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [partners, setPartners] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,7 +61,6 @@ export default function Dashboard() {
   const hasLoadedRef = useRef(false);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Filters — default to current month
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [filterDateFrom, setFilterDateFrom] = useState('');
@@ -67,13 +76,17 @@ export default function Dashboard() {
   const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || !!filterPaidBy || !!filterPaidByPerson || !!filterPerson || !!filterVehicle || !!filterPaymentSource || !!searchQuery;
 
   function clearFilters() {
-    setFilterMonth(currentMonth); setFilterDateFrom(''); setFilterDateTo('');
-    setFilterPaidBy(''); setFilterPaidByPerson(''); setFilterPerson('');
-    setFilterVehicle(''); setFilterPaymentSource('');
+    setFilterMonth(currentMonth);
+    setFilterDateFrom('');
+    setFilterDateTo('');
+    setFilterPaidBy('');
+    setFilterPaidByPerson('');
+    setFilterPerson('');
+    setFilterVehicle('');
+    setFilterPaymentSource('');
     setSearchInput('');
   }
 
-  // Build active filter labels for display
   const activeFilterLabels: string[] = [];
   if (filterMonth) {
     const d = new Date(filterMonth + '-01');
@@ -90,126 +103,53 @@ export default function Dashboard() {
   if (filterPaymentSource) activeFilterLabels.push('Source: ' + filterPaymentSource);
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
-
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
-      setVehicles((data || []).map((v: any) => v.vehicle_number));
+      setVehicles((data || []).map((v: { vehicle_number: string }) => v.vehicle_number));
     });
     supabase.from('partners').select('name').order('name').then(({ data }) => {
-      setPartners((data || []).map((p: any) => p.name));
+      setPartners((data || []).map((p: { name: string }) => p.name));
     });
   }, []);
 
   useEffect(() => {
-    async function fetchData() {
+    async function loadStats() {
       if (hasLoadedRef.current) {
         setRefreshing(true);
       } else {
         setLoading(true);
       }
 
-      // Build trip query
-      let tripQuery = supabase.from('trips').select('*');
-      if (filterVehicle) tripQuery = tripQuery.eq('vehicle_number', filterVehicle);
-      if (filterMonth) {
-        const [y, m] = filterMonth.split('-');
-        tripQuery = tripQuery.gte('date', `${y}-${m}-01`).lte('date', new Date(Number(y), Number(m), 0).toISOString().split('T')[0]);
-      } else {
-        if (filterDateFrom) tripQuery = tripQuery.gte('date', filterDateFrom);
-        if (filterDateTo) tripQuery = tripQuery.lte('date', filterDateTo);
-      }
-      const tripSearchFilter = buildTextSearchFilter([...TRIP_SEARCH_COLUMNS], searchQuery);
-      if (tripSearchFilter) tripQuery = tripQuery.or(tripSearchFilter);
+      const { dateFrom, dateTo } = getDashboardDateRange(filterMonth, filterDateFrom, filterDateTo);
+      const { data, error } = await fetchDashboardStats({
+        dateFrom,
+        dateTo,
+        tripVehicle: filterVehicle || null,
+        tripSearch: searchQuery || null,
+        expPaidBy: filterPaidBy || null,
+        expPaidByPerson: filterPaidByPerson || null,
+        expPerson: filterPerson || null,
+        expVehicle: filterVehicle || null,
+        expPaymentSource: filterPaymentSource || null,
+        expSearch: searchQuery || null,
+      });
 
-      // Build expense query
-      let expQuery = supabase.from('expenses').select('*');
-      if (filterPaidBy) expQuery = expQuery.eq('paid_by', filterPaidBy);
-      if (filterPaidByPerson) expQuery = expQuery.eq('paid_by_person', filterPaidByPerson);
-      if (filterPerson) expQuery = expQuery.eq('person', filterPerson);
-      if (filterVehicle) expQuery = expQuery.eq('vehicle_number', filterVehicle);
-      if (filterPaymentSource) expQuery = expQuery.eq('payment_source', filterPaymentSource);
-      if (filterMonth) {
-        const [y, m] = filterMonth.split('-');
-        expQuery = expQuery.gte('date', `${y}-${m}-01`).lte('date', new Date(Number(y), Number(m), 0).toISOString().split('T')[0]);
-      } else {
-        if (filterDateFrom) expQuery = expQuery.gte('date', filterDateFrom);
-        if (filterDateTo) expQuery = expQuery.lte('date', filterDateTo);
-      }
-      const expenseSearchFilter = buildTextSearchFilter([...EXPENSE_SEARCH_COLUMNS], searchQuery);
-      if (expenseSearchFilter) expQuery = expQuery.or(expenseSearchFilter);
+      if (error) toast.error('Failed to load dashboard: ' + error);
+      else setStats(data || emptyStats);
 
-      const [{ data: t, error: tripError }, { data: e, error: expError }, { data: c }, { data: allT }, { data: allE }] = await Promise.all([
-        tripQuery,
-        expQuery,
-        supabase.from('capital_contributions').select('*'),
-        supabase.from('trips').select('total_revenue'),
-        supabase.from('expenses').select('amount, payment_source'),
-      ]);
-
-      if (tripError) toast.error('Failed to load trips: ' + tripError.message);
-      if (expError) toast.error('Failed to load expenses: ' + expError.message);
-
-      setTrips(t || []);
-      setExpenses(e || []);
-      setCapital(c || []);
-      // Cash available always from unfiltered data
-      const allRevenue = (allT || []).reduce((s: number, r: any) => s + Number(r.total_revenue), 0);
-      const allExpFromRevenue = (allE || []).filter((r: any) => r.payment_source === 'Revenue').reduce((s: number, r: any) => s + Number(r.amount), 0);
-      const capPaidFromRevenue = (c || []).filter((r: any) => r.status === 'Paid' && r.payment_source === 'Revenue').reduce((s: number, r: any) => s + Number(r.value), 0);
-      setCashData({ allRevenue, allExpFromRevenue, capPaidFromRevenue });
       hasLoadedRef.current = true;
       setLoading(false);
       setRefreshing(false);
     }
 
-    fetchData();
+    loadStats();
   }, [filterMonth, filterDateFrom, filterDateTo, filterPaidBy, filterPaidByPerson, filterPerson, filterVehicle, filterPaymentSource, searchQuery]);
 
-  // Compute dashboard data from filtered results
-  const totalRevenue = trips.reduce((sum, t) => sum + Number(t.total_revenue), 0);
-  const totalExpenses = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
-  const netProfit = totalRevenue - totalExpenses;
-  const jmTotal = expenses.filter(e => e.paid_by === 'JM transport').reduce((s, e) => s + Number(e.amount), 0);
-  const maheshTotal = expenses.filter(e => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0);
-
-  // Cash flow (always from ALL data, not filtered)
-  const totalCapitalIn = capital.reduce((s, c) => s + Number(c.value), 0);
-  const cashAvailable = cashData.allRevenue - cashData.allExpFromRevenue - cashData.capPaidFromRevenue;
-
-  // Category breakdown
-  const catMap: Record<string, number> = {};
-  expenses.forEach((e) => {
-    catMap[e.category] = (catMap[e.category] || 0) + Number(e.amount);
-  });
-  const categoryBreakdown = Object.entries(catMap)
-    .map(([name, value]) => ({ name, value }))
-    .filter((c) => c.value > 0)
-    .sort((a, b) => b.value - a.value);
-
-  // Daily revenue vs expenses
-  const dateMap: Record<string, { revenue: number; expenses: number }> = {};
-  trips.forEach((t) => {
-    const d = t.date;
-    if (!dateMap[d]) dateMap[d] = { revenue: 0, expenses: 0 };
-    dateMap[d].revenue += Number(t.total_revenue);
-  });
-  expenses.forEach((e) => {
-    const d = e.date;
-    if (!dateMap[d]) dateMap[d] = { revenue: 0, expenses: 0 };
-    dateMap[d].expenses += Number(e.amount);
-  });
-  const dailyRevenue = Object.entries(dateMap)
-    .map(([date, vals]) => ({ date, ...vals }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-
-  // Vehicle-wise expenses
-  const vehMap: Record<string, number> = {};
-  expenses.filter((e) => e.expense_type === 'vehicle' && e.vehicle_number).forEach((e) => {
-    vehMap[e.vehicle_number] = (vehMap[e.vehicle_number] || 0) + Number(e.amount);
-  });
-  const vehicleExpenses = Object.entries(vehMap)
-    .map(([vehicle, amount]) => ({ vehicle, amount }))
-    .sort((a, b) => b.amount - a.amount);
+  const netProfit = stats.totalRevenue - stats.totalExpenses;
+  const dailyRevenue = useMemo(
+    () => mergeDailySeries(stats.dailyTrips, stats.dailyExpenses),
+    [stats.dailyTrips, stats.dailyExpenses],
+  );
 
   return (
     <div className="space-y-6">
@@ -311,21 +251,20 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
         <Card>
           <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
             <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Revenue</p>
-            <p className="text-base sm:text-xl font-bold text-green-600 truncate">{formatCurrency(totalRevenue)}</p>
-            <p className="text-[10px] sm:text-xs text-gray-400">{trips.length} trips</p>
+            <p className="text-base sm:text-xl font-bold text-green-600 truncate">{formatCurrency(stats.totalRevenue)}</p>
+            <p className="text-[10px] sm:text-xs text-gray-400">{stats.tripCount} trips</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
             <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Expenses</p>
-            <p className="text-base sm:text-xl font-bold text-red-600 truncate">{formatCurrency(totalExpenses)}</p>
-            <p className="text-[10px] sm:text-xs text-gray-400">{expenses.length} records</p>
+            <p className="text-base sm:text-xl font-bold text-red-600 truncate">{formatCurrency(stats.totalExpenses)}</p>
+            <p className="text-[10px] sm:text-xs text-gray-400">{stats.expenseCount} records</p>
           </CardContent>
         </Card>
 
@@ -338,40 +277,38 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className={cashAvailable >= 0 ? 'border-green-300' : 'border-red-300'}>
+        <Card className={stats.cashAvailable >= 0 ? 'border-green-300' : 'border-red-300'}>
           <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
             <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Cash Available</p>
-            <p className={`text-base sm:text-xl font-bold truncate ${cashAvailable >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-              {formatCurrency(cashAvailable)}
+            <p className={`text-base sm:text-xl font-bold truncate ${stats.cashAvailable >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+              {formatCurrency(stats.cashAvailable)}
             </p>
             <p className="text-[10px] sm:text-xs text-gray-400">from revenue</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Entity split + Capital */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-sky-600 uppercase tracking-wide">JM Transport Expenses</p>
-            <p className="text-2xl font-bold text-sky-700">{formatCurrency(jmTotal)}</p>
+            <p className="text-2xl font-bold text-sky-700">{formatCurrency(stats.jmTotal)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-orange-600 uppercase tracking-wide">Mahesh Expenses</p>
-            <p className="text-2xl font-bold text-orange-700">{formatCurrency(maheshTotal)}</p>
+            <p className="text-2xl font-bold text-orange-700">{formatCurrency(stats.maheshTotal)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-violet-600 uppercase tracking-wide">Capital Contributed</p>
-            <p className="text-2xl font-bold text-violet-700">{formatCurrency(totalCapitalIn)}</p>
+            <p className="text-2xl font-bold text-violet-700">{formatCurrency(stats.totalCapitalIn)}</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
@@ -408,7 +345,7 @@ export default function Dashboard() {
               <ResponsiveContainer width="100%" height={220}>
                 <PieChart>
                   <Pie
-                    data={categoryBreakdown}
+                    data={stats.categoryBreakdown}
                     cx="50%"
                     cy="50%"
                     innerRadius={50}
@@ -416,7 +353,7 @@ export default function Dashboard() {
                     dataKey="value"
                     paddingAngle={2}
                   >
-                    {categoryBreakdown.map((_, i) => (
+                    {stats.categoryBreakdown.map((_, i) => (
                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
                     ))}
                   </Pie>
@@ -424,7 +361,7 @@ export default function Dashboard() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
-                {categoryBreakdown.map((item, i) => (
+                {stats.categoryBreakdown.map((item, i) => (
                   <div key={item.name} className="flex items-center justify-between text-sm gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
@@ -432,9 +369,11 @@ export default function Dashboard() {
                     </div>
                     <div className="text-right shrink-0">
                       <span className="font-medium text-gray-900">{formatCurrency(item.value)}</span>
-                      <span className="text-gray-400 text-xs ml-1">
-                        ({((item.value / totalExpenses) * 100).toFixed(0)}%)
-                      </span>
+                      {stats.totalExpenses > 0 && (
+                        <span className="text-gray-400 text-xs ml-1">
+                          ({((item.value / stats.totalExpenses) * 100).toFixed(0)}%)
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -450,7 +389,7 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={vehicleExpenses}>
+            <BarChart data={stats.vehicleExpenses}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="vehicle" fontSize={12} />
               <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} fontSize={12} />
