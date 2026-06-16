@@ -19,6 +19,12 @@ INSERT INTO drivers (name) VALUES
 ('Janu Khan')
 ON CONFLICT (name) DO NOTHING;
 
+UPDATE drivers
+SET status = 'inactive',
+    left_date = '2026-05-31',
+    settlement_notes = 'Full & final settled'
+WHERE name = 'Pratap Ram';
+
 -- Vehicles
 INSERT INTO vehicles (vehicle_number, vehicle_type, model, capacity_tons) VALUES
 ('RJ43GA0834', 'Truck', '4018', 35),

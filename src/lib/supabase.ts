@@ -46,7 +46,21 @@ export type Driver = {
   id: number;
   name: string;
   phone: string | null;
+  status?: string;
+  joined_date?: string | null;
+  left_date?: string | null;
+  monthly_salary?: number;
+  daily_allowance?: number;
+  settlement_notes?: string | null;
 };
+
+export const DRIVER_PAY_CATEGORIES = {
+  allowance: 'Daily Allowance',
+  salary: 'Salary',
+  advance: 'Advance',
+} as const;
+
+export const SALARY_CATEGORIES = ['Salary', 'Driver Salary'] as const;
 
 export type Partner = {
   id: number;

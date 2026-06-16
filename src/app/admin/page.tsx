@@ -12,7 +12,8 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -177,12 +178,25 @@ function RoutesSection() {
 }
 
 // ─── Drivers Section ───
+const emptyDriverForm = {
+  name: '',
+  phone: '',
+  joined_date: '',
+  monthly_salary: '25000',
+  daily_allowance: '500',
+  settlement_notes: '',
+};
+
 function DriversSection() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState({ name: '', phone: '' });
+  const [leavingDriver, setLeavingDriver] = useState<Driver | null>(null);
+  const [leaveDate, setLeaveDate] = useState('');
+  const [leaveNotes, setLeaveNotes] = useState('');
+  const [form, setForm] = useState(emptyDriverForm);
 
   const {
     page,
@@ -211,27 +225,81 @@ function DriversSection() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = { name: form.name, phone: form.phone || null };
+    const payload = {
+      name: form.name,
+      phone: form.phone || null,
+      monthly_salary: Number(form.monthly_salary) || 25000,
+      daily_allowance: Number(form.daily_allowance) || 500,
+      settlement_notes: form.settlement_notes || null,
+      status: 'active' as const,
+    };
     if (editingId) {
-      const { error } = await supabase.from('drivers').update(payload).eq('id', editingId);
+      const { error } = await supabase.from('drivers').update({
+        phone: payload.phone,
+        joined_date: form.joined_date || null,
+        monthly_salary: payload.monthly_salary,
+        daily_allowance: payload.daily_allowance,
+        settlement_notes: payload.settlement_notes,
+      }).eq('id', editingId);
       if (error) { toast.error(error.message); return; }
       toast.success('Driver updated');
     } else {
-      // Also add to partners so they appear in expense dropdowns
-      const { error } = await supabase.from('drivers').insert(payload);
+      const { error } = await supabase.from('drivers').insert({
+        ...payload,
+        joined_date: form.joined_date || null,
+      });
       if (error) { toast.error(error.message); return; }
       await supabase.from('partners').upsert({ name: form.name }, { onConflict: 'name' });
       toast.success('Driver added');
     }
     setDialogOpen(false); setEditingId(null);
-    setForm({ name: '', phone: '' });
+    setForm(emptyDriverForm);
     fetch();
   }
 
   function startEdit(d: Driver) {
     setEditingId(d.id);
-    setForm({ name: d.name, phone: d.phone || '' });
+    setForm({
+      name: d.name,
+      phone: d.phone || '',
+      joined_date: d.joined_date || '',
+      monthly_salary: String(d.monthly_salary ?? 25000),
+      daily_allowance: String(d.daily_allowance ?? 500),
+      settlement_notes: d.settlement_notes || '',
+    });
     setDialogOpen(true);
+  }
+
+  function openLeaveDialog(d: Driver) {
+    setLeavingDriver(d);
+    setLeaveDate(new Date().toISOString().split('T')[0]);
+    setLeaveNotes('');
+    setLeaveDialogOpen(true);
+  }
+
+  async function handleMarkLeft(e: React.FormEvent) {
+    e.preventDefault();
+    if (!leavingDriver) return;
+    const { error } = await supabase.from('drivers').update({
+      status: 'inactive',
+      left_date: leaveDate,
+      settlement_notes: leaveNotes || leavingDriver.settlement_notes || 'Left company',
+    }).eq('id', leavingDriver.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${leavingDriver.name} marked as inactive`);
+    setLeaveDialogOpen(false);
+    setLeavingDriver(null);
+    fetch();
+  }
+
+  async function handleReactivate(d: Driver) {
+    const { error } = await supabase.from('drivers').update({
+      status: 'active',
+      left_date: null,
+    }).eq('id', d.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${d.name} reactivated`);
+    fetch();
   }
 
   async function handleDelete(id: number) {
@@ -246,11 +314,11 @@ function DriversSection() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-500">{totalDrivers} drivers</p>
-        <Button size="sm" onClick={() => { setEditingId(null); setForm({ name: '', phone: '' }); setDialogOpen(true); }}>
+        <Button size="sm" onClick={() => { setEditingId(null); setForm(emptyDriverForm); setDialogOpen(true); }}>
           <Plus className="h-4 w-4 mr-1" /> Add Driver
         </Button>
         <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
-          <DialogContent className="max-w-sm">
+          <DialogContent className="max-w-sm max-h-[90vh] overflow-y-auto">
             <DialogHeader><DialogTitle>{editingId ? 'Edit Driver' : 'New Driver'}</DialogTitle></DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -261,7 +329,47 @@ function DriversSection() {
                 <Label>Phone</Label>
                 <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Optional" />
               </div>
+              <div>
+                <Label>Joined date</Label>
+                <Input
+                  type="date"
+                  value={form.joined_date}
+                  onChange={(e) => setForm({ ...form, joined_date: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Monthly salary (₹)</Label>
+                  <Input type="number" min={0} value={form.monthly_salary} onChange={(e) => setForm({ ...form, monthly_salary: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Daily allowance (₹)</Label>
+                  <Input type="number" min={0} value={form.daily_allowance} onChange={(e) => setForm({ ...form, daily_allowance: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <Label>Notes</Label>
+                <Input value={form.settlement_notes} onChange={(e) => setForm({ ...form, settlement_notes: e.target.value })} placeholder="Optional" />
+              </div>
               <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Driver</Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Mark as left — {leavingDriver?.name}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleMarkLeft} className="space-y-4">
+              <div>
+                <Label>Last working day</Label>
+                <Input type="date" value={leaveDate} onChange={(e) => setLeaveDate(e.target.value)} required />
+              </div>
+              <div>
+                <Label>Settlement notes</Label>
+                <Input value={leaveNotes} onChange={(e) => setLeaveNotes(e.target.value)} placeholder="e.g. Full & final settled" />
+              </div>
+              <Button type="submit" className="w-full">Mark inactive</Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -272,22 +380,48 @@ function DriversSection() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Salary</TableHead>
+                <TableHead className="text-right">Allowance</TableHead>
                 <TableHead>Phone</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={3} className="text-center py-6">Loading...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center py-6">Loading...</TableCell></TableRow>
               ) : drivers.length === 0 ? (
-                <TableRow><TableCell colSpan={3} className="text-center py-6 text-gray-500">No drivers</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center py-6 text-gray-500">No drivers</TableCell></TableRow>
               ) : drivers.map(d => (
                 <TableRow key={d.id}>
-                  <TableCell className="font-medium">{d.name}</TableCell>
+                  <TableCell className="font-medium">
+                    {d.name}
+                    {d.settlement_notes && (
+                      <p className="text-xs text-gray-500 font-normal truncate max-w-[160px]">{d.settlement_notes}</p>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {d.status === 'inactive' ? (
+                      <Badge variant="outline" className="text-gray-600">Inactive</Badge>
+                    ) : (
+                      <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Active</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right text-sm">₹{Number(d.monthly_salary ?? 25000).toLocaleString('en-IN')}</TableCell>
+                  <TableCell className="text-right text-sm">₹{Number(d.daily_allowance ?? 500).toLocaleString('en-IN')}/day</TableCell>
                   <TableCell>{d.phone || <span className="text-gray-300">-</span>}</TableCell>
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => startEdit(d)}><Pencil className="h-4 w-4" /></Button>
+                      {d.status === 'inactive' ? (
+                        <Button variant="ghost" size="icon" title="Reactivate" onClick={() => handleReactivate(d)}>
+                          <Users className="h-4 w-4 text-green-600" />
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="icon" title="Mark as left" onClick={() => openLeaveDialog(d)}>
+                          <UserX className="h-4 w-4 text-amber-600" />
+                        </Button>
+                      )}
                       <Button variant="ghost" size="icon" onClick={() => handleDelete(d.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                     </div>
                   </TableCell>

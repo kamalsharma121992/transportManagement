@@ -184,7 +184,13 @@ export default function TripsPage() {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
       setVehicles((data || []).map((v: { vehicle_number: string }) => v.vehicle_number));
     });
-    supabase.from('drivers').select('name').order('name').then(({ data }) => {
+    supabase.from('drivers').select('name').eq('status', 'active').order('name').then(({ data, error }) => {
+      if (error) {
+        supabase.from('drivers').select('name').order('name').then(({ data: all }) => {
+          setDrivers((all || []).map((d: { name: string }) => d.name));
+        });
+        return;
+      }
       setDrivers((data || []).map((d: { name: string }) => d.name));
     });
     supabase.from('routes').select('route_name, origin, destination, distance_km, standard_rate_per_ton').then(({ data }) => {
