@@ -238,44 +238,28 @@ export async function setDriverLeaveDates(
   if (insError) throw insError;
 }
 
-export async function fetchMonthlyPayroll(month: string): Promise<MonthlyPayrollRow[]> {
-  const { from, to } = getMonthBounds(month);
-  const allDrivers = await fetchDrivers();
-  const periodByDriver = await fetchPayrollPeriods(month);
-  const drivers = allDrivers.filter(
-    (d) =>
-      d.status === 'active' ||
-      isDriverActiveInMonth(d, month, periodByDriver.get(d.name)),
+function hasDriverPayInMonth(
+  driverName: string,
+  allowanceByDriver: Map<string, number>,
+  advanceByDriver: Map<string, number>,
+  salaryByDriver: Map<string, number>,
+): boolean {
+  return (
+    (allowanceByDriver.get(driverName) || 0) > 0
+    || (advanceByDriver.get(driverName) || 0) > 0
+    || (salaryByDriver.get(driverName) || 0) > 0
   );
-  const leaveByDriver = await fetchLeaveDatesForMonth(month);
+}
 
-  const { data: expenses } = await supabase
-    .from('expenses')
-    .select('person, category, amount, date')
-    .gte('date', from)
-    .lte('date', to)
-    .in('category', [
-      DRIVER_PAY_CATEGORIES.allowance,
-      DRIVER_PAY_CATEGORIES.advance,
-      ...SALARY_CATEGORIES,
-    ]);
-
-  const allowanceByDriver = new Map<string, number>();
-  const advanceByDriver = new Map<string, number>();
-  const salaryByDriver = new Map<string, number>();
-
-  for (const e of expenses || []) {
-    if (!e.person) continue;
-    const amt = Number(e.amount);
-    if (e.category === DRIVER_PAY_CATEGORIES.allowance) {
-      allowanceByDriver.set(e.person, (allowanceByDriver.get(e.person) || 0) + amt);
-    } else if (e.category === DRIVER_PAY_CATEGORIES.advance) {
-      advanceByDriver.set(e.person, (advanceByDriver.get(e.person) || 0) + amt);
-    } else if (SALARY_CATEGORIES.includes(e.category as (typeof SALARY_CATEGORIES)[number])) {
-      salaryByDriver.set(e.person, (salaryByDriver.get(e.person) || 0) + amt);
-    }
-  }
-
+function buildPayrollRows(
+  drivers: Driver[],
+  month: string,
+  periodByDriver: Map<string, DriverPayrollPeriod>,
+  leaveByDriver: Map<string, Set<string>>,
+  allowanceByDriver: Map<string, number>,
+  advanceByDriver: Map<string, number>,
+  salaryByDriver: Map<string, number>,
+): MonthlyPayrollRow[] {
   return drivers.map((driver) => {
     const period = periodByDriver.get(driver.name) ?? null;
     const asOf = getPayrollAsOfDate(month);
@@ -320,6 +304,98 @@ export async function fetchMonthlyPayroll(month: string): Promise<MonthlyPayroll
       balance,
     };
   });
+}
+
+async function fetchPayExpenseMaps(month: string) {
+  const { from, to } = getMonthBounds(month);
+  const { data: expenses } = await supabase
+    .from('expenses')
+    .select('person, category, amount, date')
+    .gte('date', from)
+    .lte('date', to)
+    .in('category', [
+      DRIVER_PAY_CATEGORIES.allowance,
+      DRIVER_PAY_CATEGORIES.advance,
+      ...SALARY_CATEGORIES,
+    ]);
+
+  const allowanceByDriver = new Map<string, number>();
+  const advanceByDriver = new Map<string, number>();
+  const salaryByDriver = new Map<string, number>();
+
+  for (const e of expenses || []) {
+    if (!e.person) continue;
+    const amt = Number(e.amount);
+    if (e.category === DRIVER_PAY_CATEGORIES.allowance) {
+      allowanceByDriver.set(e.person, (allowanceByDriver.get(e.person) || 0) + amt);
+    } else if (e.category === DRIVER_PAY_CATEGORIES.advance) {
+      advanceByDriver.set(e.person, (advanceByDriver.get(e.person) || 0) + amt);
+    } else if (SALARY_CATEGORIES.includes(e.category as (typeof SALARY_CATEGORIES)[number])) {
+      salaryByDriver.set(e.person, (salaryByDriver.get(e.person) || 0) + amt);
+    }
+  }
+
+  return { allowanceByDriver, advanceByDriver, salaryByDriver };
+}
+
+export async function fetchInactiveDrivers(): Promise<Driver[]> {
+  const all = await fetchDrivers();
+  return all.filter((d) => d.status === 'inactive');
+}
+
+/** Month to open for an inactive driver's payroll (usually their last working month). */
+export function getSuggestedPayrollMonth(driver: Driver): string | null {
+  if (driver.left_date) return driver.left_date.slice(0, 7);
+  if (driver.joined_date) return driver.joined_date.slice(0, 7);
+  return null;
+}
+
+export async function fetchMonthlyPayroll(month: string): Promise<MonthlyPayrollRow[]> {
+  const allDrivers = await fetchDrivers();
+  const periodByDriver = await fetchPayrollPeriods(month);
+  const drivers = allDrivers.filter(
+    (d) =>
+      d.status === 'active'
+      && isDriverActiveInMonth(d, month, periodByDriver.get(d.name)),
+  );
+  const leaveByDriver = await fetchLeaveDatesForMonth(month);
+  const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month);
+
+  return buildPayrollRows(
+    drivers,
+    month,
+    periodByDriver,
+    leaveByDriver,
+    allowanceByDriver,
+    advanceByDriver,
+    salaryByDriver,
+  );
+}
+
+export async function fetchInactivePayroll(month: string): Promise<MonthlyPayrollRow[]> {
+  const allDrivers = await fetchDrivers();
+  const periodByDriver = await fetchPayrollPeriods(month);
+  const leaveByDriver = await fetchLeaveDatesForMonth(month);
+  const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month);
+
+  const drivers = allDrivers.filter((d) => {
+    if (d.status !== 'inactive') return false;
+    const period = periodByDriver.get(d.name);
+    return (
+      isDriverActiveInMonth(d, month, period)
+      || hasDriverPayInMonth(d.name, allowanceByDriver, advanceByDriver, salaryByDriver)
+    );
+  });
+
+  return buildPayrollRows(
+    drivers,
+    month,
+    periodByDriver,
+    leaveByDriver,
+    allowanceByDriver,
+    advanceByDriver,
+    salaryByDriver,
+  );
 }
 
 export async function postDriverExpense(params: {

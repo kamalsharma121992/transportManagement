@@ -4,9 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
 import {
   computePayrollTotals,
+  fetchInactiveDrivers,
+  fetchInactivePayroll,
   fetchMonthlyPayroll,
   getEmploymentDaysInMonth,
   getMonthBounds,
+  getSuggestedPayrollMonth,
   postAdvance,
   postDailyAllowance,
   postSalary,
@@ -16,6 +19,7 @@ import {
   setPayrollPeriod,
   type MonthlyPayrollRow,
 } from '@/lib/driver-payroll';
+import type { Driver } from '@/lib/supabase';
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,7 +36,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
-type Tab = 'allowance' | 'monthly';
+type Tab = 'allowance' | 'monthly' | 'inactive';
 
 export default function PayrollPage() {
   const today = new Date().toISOString().split('T')[0];
@@ -42,6 +46,8 @@ export default function PayrollPage() {
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<MonthlyPayrollRow[]>([]);
+  const [inactiveRows, setInactiveRows] = useState<MonthlyPayrollRow[]>([]);
+  const [inactiveDrivers, setInactiveDrivers] = useState<Driver[]>([]);
   const [salaryInputs, setSalaryInputs] = useState<Record<string, string>>({});
   const [allowanceDialog, setAllowanceDialog] = useState<{
     row: MonthlyPayrollRow;
@@ -69,10 +75,16 @@ export default function PayrollPage() {
   async function load() {
     setLoading(true);
     try {
-      const data = await fetchMonthlyPayroll(selectedMonth);
+      const [data, inactiveData, inactiveList] = await Promise.all([
+        fetchMonthlyPayroll(selectedMonth),
+        fetchInactivePayroll(selectedMonth),
+        fetchInactiveDrivers(),
+      ]);
       setRows(data);
+      setInactiveRows(inactiveData);
+      setInactiveDrivers(inactiveList);
       const inputs: Record<string, string> = {};
-      for (const r of data) {
+      for (const r of [...data, ...inactiveData]) {
         inputs[r.driver.name] = r.salaryPaid > 0 ? String(r.salaryPaid) : String(r.salaryDefault);
       }
       setSalaryInputs(inputs);
@@ -274,7 +286,10 @@ export default function PayrollPage() {
     }
     setPosting('advance');
     try {
-      const driver = rows.find((r) => r.driver.name === advanceDialog.driverName)?.driver;
+      const driver =
+        rows.find((r) => r.driver.name === advanceDialog.driverName)?.driver
+        ?? inactiveRows.find((r) => r.driver.name === advanceDialog.driverName)?.driver
+        ?? inactiveDrivers.find((d) => d.name === advanceDialog.driverName);
       if (!driver) throw new Error('Driver not found');
       await postAdvance(driver, advanceDialog.date, amount, advanceDialog.description);
       toast.success(`Advance posted for ${advanceDialog.driverName}`);
@@ -302,11 +317,10 @@ export default function PayrollPage() {
   const tabs: { id: Tab; label: string }[] = [
     { id: 'allowance', label: 'Daily allowance' },
     { id: 'monthly', label: 'Monthly summary' },
+    { id: 'inactive', label: 'Inactive drivers' },
   ];
 
-  const allowanceRows = rows.filter(
-    (r) => r.driver.status === 'active' || r.workingDays > 0 || r.allowancePaid > 0,
-  );
+  const allowanceRows = rows.filter((r) => r.driver.status === 'active');
 
   const monthlyDisplayRows = useMemo(
     () =>
@@ -320,6 +334,23 @@ export default function PayrollPage() {
       }),
     [rows, salaryInputs],
   );
+
+  const inactiveDisplayRows = useMemo(
+    () =>
+      inactiveRows.map((row) => {
+        const salaryOverride = Number(salaryInputs[row.driver.name]);
+        const { gross, balance } = computePayrollTotals(
+          row,
+          Number.isFinite(salaryOverride) && salaryOverride > 0 ? salaryOverride : undefined,
+        );
+        return { ...row, gross, balance };
+      }),
+    [inactiveRows, salaryInputs],
+  );
+
+  function suggestedMonthLabel(month: string): string {
+    return getMonthFilterOptions().find((o) => o.value === month)?.label ?? month;
+  }
 
   return (
     <div className="space-y-6">
@@ -343,7 +374,11 @@ export default function PayrollPage() {
               </select>
             </div>
             <p className="text-sm text-gray-500 pb-2">
-              Allowance = <strong>₹500 per working day</strong> (through today for this month). Set start date per driver, then mark leave.
+              {tab === 'inactive' ? (
+                <>Pick the month they worked — usually their last month before leaving.</>
+              ) : (
+                <>Allowance = <strong>₹500 per working day</strong> (through today for this month). Set start date per driver, then mark leave.</>
+              )}
             </p>
           </div>
         </CardContent>
@@ -405,9 +440,6 @@ export default function PayrollPage() {
                     <TableRow key={row.driver.name}>
                       <TableCell>
                         <div className="font-medium">{row.driver.name}</div>
-                        {row.driver.status === 'inactive' && (
-                          <span className="text-xs text-gray-500">Inactive</span>
-                        )}
                       </TableCell>
                       <TableCell>
                         <button
@@ -523,9 +555,6 @@ export default function PayrollPage() {
                     <TableRow key={row.driver.name}>
                       <TableCell>
                         <div className="font-medium">{row.driver.name}</div>
-                        {row.driver.status === 'inactive' && (
-                          <span className="text-xs text-gray-500">Left {row.driver.left_date}</span>
-                        )}
                       </TableCell>
                       <TableCell>
                         <button
@@ -566,7 +595,7 @@ export default function PayrollPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1 flex-wrap">
-                          {row.salaryPaid === 0 && row.driver.status === 'active' && (
+                          {row.salaryPaid === 0 && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -587,11 +616,9 @@ export default function PayrollPage() {
                               Revert salary
                             </Button>
                           )}
-                          {row.driver.status === 'active' && (
-                            <Button size="sm" variant="ghost" onClick={() => openAdvance(row.driver.name)}>
-                              Advance
-                            </Button>
-                          )}
+                          <Button size="sm" variant="ghost" onClick={() => openAdvance(row.driver.name)}>
+                            Advance
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -601,6 +628,195 @@ export default function PayrollPage() {
             </Table>
           </CardContent>
         </Card>
+      )}
+
+      {tab === 'inactive' && (
+        <>
+          {inactiveDrivers.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Former drivers ({inactiveDrivers.length})</CardTitle>
+                <p className="text-xs text-gray-500">
+                  Jump to the month they left to view or settle full &amp; final payments.
+                </p>
+              </CardHeader>
+              <CardContent className="p-0 overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Driver</TableHead>
+                      <TableHead>Left</TableHead>
+                      <TableHead>Settlement notes</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {inactiveDrivers.map((driver) => {
+                      const suggested = getSuggestedPayrollMonth(driver);
+                      return (
+                        <TableRow key={driver.name}>
+                          <TableCell className="font-medium">{driver.name}</TableCell>
+                          <TableCell>{driver.left_date ? formatDate(driver.left_date) : '—'}</TableCell>
+                          <TableCell className="text-sm text-gray-600 max-w-xs truncate">
+                            {driver.settlement_notes || '—'}
+                          </TableCell>
+                          <TableCell>
+                            {suggested && suggested !== selectedMonth && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setSelectedMonth(suggested)}
+                              >
+                                View {suggestedMonthLabel(suggested)}
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Payroll — {monthLabel}</CardTitle>
+              <p className="text-xs text-gray-500">
+                Full &amp; final settlement for inactive drivers. Post salary or advance here; balance should reach ₹0 when settled.
+              </p>
+            </CardHeader>
+            <CardContent className="p-0 overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Driver</TableHead>
+                    <TableHead>From</TableHead>
+                    <TableHead className="text-right">Working</TableHead>
+                    <TableHead className="text-right">Leave</TableHead>
+                    <TableHead className="text-right">Allowance due</TableHead>
+                    <TableHead className="text-right">Allowance paid</TableHead>
+                    <TableHead className="text-right">Advances</TableHead>
+                    <TableHead className="text-right">Total due</TableHead>
+                    <TableHead>Salary</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loading ? (
+                    <TableRow>
+                      <TableCell colSpan={11} className="text-center py-8 text-gray-500">Loading…</TableCell>
+                    </TableRow>
+                  ) : inactiveDrivers.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={11} className="text-center py-8 text-gray-500">
+                        No inactive drivers
+                      </TableCell>
+                    </TableRow>
+                  ) : inactiveDisplayRows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={11} className="text-center py-8 text-gray-500">
+                        No payroll for {monthLabel}. Use &quot;View …&quot; above to open their last month.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    inactiveDisplayRows.map((row) => (
+                      <TableRow key={row.driver.name}>
+                        <TableCell>
+                          <div className="font-medium">{row.driver.name}</div>
+                          {row.driver.left_date && (
+                            <span className="text-xs text-gray-500">Left {formatDate(row.driver.left_date)}</span>
+                          )}
+                          {row.driver.settlement_notes && (
+                            <p className="text-xs text-gray-500 mt-0.5">{row.driver.settlement_notes}</p>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <button
+                            type="button"
+                            className="text-sm text-blue-700 hover:underline"
+                            onClick={() => openPeriodDialog(row)}
+                          >
+                            {formatDate(row.periodStart)}
+                          </button>
+                        </TableCell>
+                        <TableCell className="text-right">{row.workingDays}</TableCell>
+                        <TableCell className="text-right">{row.leaveDays}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(row.allowanceDue)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(row.allowancePaid)}</TableCell>
+                        <TableCell className="text-right text-red-600">{formatCurrency(row.advancePaid)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(row.gross)}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 min-w-[140px]">
+                            <Input
+                              type="number"
+                              className="h-8 text-sm"
+                              value={salaryInputs[row.driver.name] ?? ''}
+                              onChange={(e) =>
+                                setSalaryInputs((prev) => ({ ...prev, [row.driver.name]: e.target.value }))
+                              }
+                              disabled={row.salaryPaid > 0}
+                            />
+                            {row.salaryPaid > 0 && (
+                              <Check className="h-4 w-4 text-green-600 shrink-0" />
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className={cn(
+                          'text-right font-medium',
+                          row.balance > 0 ? 'text-amber-700' : row.balance < 0 ? 'text-red-600' : 'text-green-700',
+                        )}>
+                          {formatCurrency(row.balance)}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1 flex-wrap">
+                            {row.salaryPaid === 0 && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={posting === `salary-${row.driver.name}`}
+                                onClick={() => handlePostSalary(row)}
+                              >
+                                Post salary
+                              </Button>
+                            )}
+                            {row.salaryPaid > 0 && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-red-600 border-red-200 hover:bg-red-50"
+                                disabled={posting === `revert-salary-${row.driver.name}`}
+                                onClick={() => handleRevertSalary(row)}
+                              >
+                                Revert salary
+                              </Button>
+                            )}
+                            {row.allowancePaid > 0 && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-red-600 border-red-200 hover:bg-red-50"
+                                disabled={posting === `revert-allowance-${row.driver.name}`}
+                                onClick={() => handleRevertLastAllowance(row)}
+                              >
+                                Revert allowance
+                              </Button>
+                            )}
+                            <Button size="sm" variant="ghost" onClick={() => openAdvance(row.driver.name)}>
+                              Advance
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </>
       )}
 
       <Dialog open={!!leaveDialog} onOpenChange={(o) => !o && setLeaveDialog(null)}>
