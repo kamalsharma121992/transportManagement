@@ -109,17 +109,14 @@ export default function ExpensesPage() {
     if (filterPerson) q = q.eq('person', filterPerson);
     if (filterPaidByPerson) q = q.eq('paid_by_person', filterPaidByPerson);
     if (filterPaidBy) q = q.eq('paid_by', filterPaidBy);
-    const isSearching = searchQuery.trim().length > 0;
-    if (!isSearching) {
-      if (filterMonth) {
-        const [y, m] = filterMonth.split('-');
-        const start = `${y}-${m}-01`;
-        const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
-        q = q.gte('date', start).lte('date', end);
-      } else {
-        if (filterDateFrom) q = q.gte('date', filterDateFrom);
-        if (filterDateTo) q = q.lte('date', filterDateTo);
-      }
+    if (filterMonth) {
+      const [y, m] = filterMonth.split('-');
+      const start = `${y}-${m}-01`;
+      const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
+      q = q.gte('date', start).lte('date', end);
+    } else {
+      if (filterDateFrom) q = q.gte('date', filterDateFrom);
+      if (filterDateTo) q = q.lte('date', filterDateTo);
     }
     const searchFilter = buildTextSearchFilter([...EXPENSE_SEARCH_COLUMNS], searchQuery);
     if (searchFilter) q = q.or(searchFilter);
@@ -162,9 +159,7 @@ export default function ExpensesPage() {
 
   // Active filter labels
   const activeFilterLabels: string[] = [];
-  if (searchQuery) {
-    activeFilterLabels.push('All dates (search)');
-  } else if (filterMonth) {
+  if (filterMonth) {
     const d = new Date(filterMonth + '-01');
     activeFilterLabels.push(d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }));
   } else if (!filterDateFrom && !filterDateTo) {

@@ -30,7 +30,7 @@ export const EXPENSE_SEARCH_COLUMNS = [
   'paid_by_person',
   'bill_receipt_ref',
   'paid_by',
-  'expense_type',
+  // expense_type is a PG enum — ilike fails and breaks the whole .or() filter
 ] as const;
 
 export const VEHICLE_SEARCH_COLUMNS = [

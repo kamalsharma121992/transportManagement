@@ -3,8 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, JM_PARTNERS } from '@/lib/supabase';
 import { formatCurrency, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
+import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/page-header';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS, TRIP_SEARCH_COLUMNS } from '@/lib/search';
 import { Input } from '@/components/ui/input';
 import {
   TrendingUp,
@@ -58,13 +61,16 @@ export default function Dashboard() {
   const [filterPerson, setFilterPerson] = useState('');
   const [filterVehicle, setFilterVehicle] = useState('');
   const [filterPaymentSource, setFilterPaymentSource] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const searchQuery = useDebouncedValue(searchInput);
 
-  const hasActiveFilters = filterMonth !== currentMonth || filterDateFrom || filterDateTo || filterPaidBy || filterPaidByPerson || filterPerson || filterVehicle || filterPaymentSource;
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || !!filterPaidBy || !!filterPaidByPerson || !!filterPerson || !!filterVehicle || !!filterPaymentSource || !!searchQuery;
 
   function clearFilters() {
     setFilterMonth(currentMonth); setFilterDateFrom(''); setFilterDateTo('');
     setFilterPaidBy(''); setFilterPaidByPerson(''); setFilterPerson('');
     setFilterVehicle(''); setFilterPaymentSource('');
+    setSearchInput('');
   }
 
   // Build active filter labels for display
@@ -82,6 +88,7 @@ export default function Dashboard() {
   if (filterPerson) activeFilterLabels.push('Given to: ' + filterPerson);
   if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
   if (filterPaymentSource) activeFilterLabels.push('Source: ' + filterPaymentSource);
+  if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
 
   useEffect(() => {
@@ -111,6 +118,8 @@ export default function Dashboard() {
         if (filterDateFrom) tripQuery = tripQuery.gte('date', filterDateFrom);
         if (filterDateTo) tripQuery = tripQuery.lte('date', filterDateTo);
       }
+      const tripSearchFilter = buildTextSearchFilter([...TRIP_SEARCH_COLUMNS], searchQuery);
+      if (tripSearchFilter) tripQuery = tripQuery.or(tripSearchFilter);
 
       // Build expense query
       let expQuery = supabase.from('expenses').select('*');
@@ -126,14 +135,20 @@ export default function Dashboard() {
         if (filterDateFrom) expQuery = expQuery.gte('date', filterDateFrom);
         if (filterDateTo) expQuery = expQuery.lte('date', filterDateTo);
       }
+      const expenseSearchFilter = buildTextSearchFilter([...EXPENSE_SEARCH_COLUMNS], searchQuery);
+      if (expenseSearchFilter) expQuery = expQuery.or(expenseSearchFilter);
 
-      const [{ data: t }, { data: e }, { data: c }, { data: allT }, { data: allE }] = await Promise.all([
+      const [{ data: t, error: tripError }, { data: e, error: expError }, { data: c }, { data: allT }, { data: allE }] = await Promise.all([
         tripQuery,
         expQuery,
         supabase.from('capital_contributions').select('*'),
         supabase.from('trips').select('total_revenue'),
         supabase.from('expenses').select('amount, payment_source'),
       ]);
+
+      if (tripError) toast.error('Failed to load trips: ' + tripError.message);
+      if (expError) toast.error('Failed to load expenses: ' + expError.message);
+
       setTrips(t || []);
       setExpenses(e || []);
       setCapital(c || []);
@@ -148,7 +163,7 @@ export default function Dashboard() {
     }
 
     fetchData();
-  }, [filterMonth, filterDateFrom, filterDateTo, filterPaidBy, filterPaidByPerson, filterPerson, filterVehicle, filterPaymentSource]);
+  }, [filterMonth, filterDateFrom, filterDateTo, filterPaidBy, filterPaidByPerson, filterPerson, filterVehicle, filterPaymentSource, searchQuery]);
 
   // Compute dashboard data from filtered results
   const totalRevenue = trips.reduce((sum, t) => sum + Number(t.total_revenue), 0);
@@ -200,9 +215,14 @@ export default function Dashboard() {
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        hasActiveFilters={!!hasActiveFilters}
+        search={{
+          value: searchInput,
+          onChange: setSearchInput,
+          placeholder: 'Search vehicle, driver, category, description...',
+        }}
+        hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
-        clearFiltersLabel="Reset to current month"
+        clearFiltersLabel="Reset filters"
         filterLabels={activeFilterLabels}
       />
 
