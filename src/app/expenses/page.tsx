@@ -16,6 +16,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Plus, Pencil, Trash2, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { PaginationControls } from '@/components/pagination-controls';
+import { useServerPagination } from '@/hooks/use-server-pagination';
+import { getSupabaseRange } from '@/lib/pagination';
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -73,6 +76,70 @@ export default function ExpensesPage() {
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterMonth, setFilterMonth] = useState(currentMonth);
+  const [summary, setSummary] = useState({ total: 0, jmTotal: 0, maheshTotal: 0 });
+
+  const {
+    page,
+    pageSize,
+    setPage,
+    setPageSize,
+    totalItems: totalExpenses,
+    setTotalItems: setTotalExpenses,
+    totalPages,
+  } = useServerPagination([
+    filterType, filterVehicle, filterCategory, filterPerson,
+    filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth,
+  ]);
+
+  async function fetchExpenses() {
+    setLoading(true);
+    const { from, to } = getSupabaseRange(page, pageSize);
+
+    let listQuery = supabase.from('expenses').select('*', { count: 'exact' }).order('date', { ascending: false });
+    if (filterType) listQuery = listQuery.eq('expense_type', filterType);
+    if (filterVehicle) listQuery = listQuery.eq('vehicle_number', filterVehicle);
+    if (filterCategory) listQuery = listQuery.eq('category', filterCategory);
+    if (filterPerson) listQuery = listQuery.eq('person', filterPerson);
+    if (filterPaidByPerson) listQuery = listQuery.eq('paid_by_person', filterPaidByPerson);
+    if (filterPaidBy) listQuery = listQuery.eq('paid_by', filterPaidBy);
+    if (filterMonth) {
+      const [y, m] = filterMonth.split('-');
+      const start = `${y}-${m}-01`;
+      const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
+      listQuery = listQuery.gte('date', start).lte('date', end);
+    } else {
+      if (filterDateFrom) listQuery = listQuery.gte('date', filterDateFrom);
+      if (filterDateTo) listQuery = listQuery.lte('date', filterDateTo);
+    }
+    const { data, count } = await listQuery.range(from, to);
+
+    let summaryQuery = supabase.from('expenses').select('amount, paid_by');
+    if (filterType) summaryQuery = summaryQuery.eq('expense_type', filterType);
+    if (filterVehicle) summaryQuery = summaryQuery.eq('vehicle_number', filterVehicle);
+    if (filterCategory) summaryQuery = summaryQuery.eq('category', filterCategory);
+    if (filterPerson) summaryQuery = summaryQuery.eq('person', filterPerson);
+    if (filterPaidByPerson) summaryQuery = summaryQuery.eq('paid_by_person', filterPaidByPerson);
+    if (filterPaidBy) summaryQuery = summaryQuery.eq('paid_by', filterPaidBy);
+    if (filterMonth) {
+      const [y, m] = filterMonth.split('-');
+      const start = `${y}-${m}-01`;
+      const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
+      summaryQuery = summaryQuery.gte('date', start).lte('date', end);
+    } else {
+      if (filterDateFrom) summaryQuery = summaryQuery.gte('date', filterDateFrom);
+      if (filterDateTo) summaryQuery = summaryQuery.lte('date', filterDateTo);
+    }
+    const { data: summaryRows } = await summaryQuery;
+
+    setExpenses(data || []);
+    setTotalExpenses(count ?? 0);
+    setSummary({
+      total: (summaryRows || []).reduce((sum, e) => sum + Number(e.amount), 0),
+      jmTotal: (summaryRows || []).filter((e) => e.paid_by === 'JM transport').reduce((s, e) => s + Number(e.amount), 0),
+      maheshTotal: (summaryRows || []).filter((e) => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0),
+    });
+    setLoading(false);
+  }
 
   const hasActiveFilters = filterMonth !== currentMonth || filterType || filterVehicle || filterCategory || filterPerson || filterPaidByPerson || filterPaidBy || filterDateFrom || filterDateTo;
 
@@ -99,37 +166,18 @@ export default function ExpensesPage() {
   if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
   if (filterCategory) activeFilterLabels.push('Category: ' + filterCategory);
 
-  async function fetchExpenses() {
-    let query = supabase.from('expenses').select('*').order('date', { ascending: false });
-    if (filterType) query = query.eq('expense_type', filterType);
-    if (filterVehicle) query = query.eq('vehicle_number', filterVehicle);
-    if (filterCategory) query = query.eq('category', filterCategory);
-    if (filterPerson) query = query.eq('person', filterPerson);
-    if (filterPaidByPerson) query = query.eq('paid_by_person', filterPaidByPerson);
-    if (filterPaidBy) query = query.eq('paid_by', filterPaidBy);
-    if (filterMonth) {
-      const [y, m] = filterMonth.split('-');
-      const start = `${y}-${m}-01`;
-      const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
-      query = query.gte('date', start).lte('date', end);
-    } else {
-      if (filterDateFrom) query = query.gte('date', filterDateFrom);
-      if (filterDateTo) query = query.lte('date', filterDateTo);
-    }
-    const { data } = await query;
-    setExpenses(data || []);
-    setLoading(false);
-  }
-
   useEffect(() => {
     fetchExpenses();
+  }, [page, pageSize, filterType, filterVehicle, filterCategory, filterPerson, filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth]);
+
+  useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
-      setVehicles((data || []).map((v: any) => v.vehicle_number));
+      setVehicles((data || []).map((v: { vehicle_number: string }) => v.vehicle_number));
     });
     supabase.from('partners').select('name').order('name').then(({ data }) => {
-      setPartners((data || []).map((p: any) => p.name));
+      setPartners((data || []).map((p: { name: string }) => p.name));
     });
-  }, [filterType, filterVehicle, filterCategory, filterPerson, filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth]);
+  }, []);
 
   function handleTypeChange(type: ExpenseType) {
     const categories = CATEGORIES_BY_TYPE[type];
@@ -211,9 +259,6 @@ export default function ExpensesPage() {
     fetchExpenses();
   }
 
-  const totalFiltered = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
-  const jmTotal = expenses.filter(e => e.paid_by === 'JM transport').reduce((s, e) => s + Number(e.amount), 0);
-  const maheshTotal = expenses.filter(e => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0);
   const availableCategories = form.expense_type ? CATEGORIES_BY_TYPE[form.expense_type] : [];
 
   return (
@@ -349,20 +394,20 @@ export default function ExpensesPage() {
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Total</p>
-            <p className="text-2xl font-bold text-gray-900">{formatCurrency(totalFiltered)}</p>
+            <p className="text-2xl font-bold text-gray-900">{formatCurrency(summary.total)}</p>
             <p className="text-xs text-gray-400">{expenses.length} records</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-sky-600 uppercase tracking-wide">JM Transport</p>
-            <p className="text-2xl font-bold text-sky-700">{formatCurrency(jmTotal)}</p>
+            <p className="text-2xl font-bold text-sky-700">{formatCurrency(summary.jmTotal)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-orange-600 uppercase tracking-wide">Mahesh</p>
-            <p className="text-2xl font-bold text-orange-700">{formatCurrency(maheshTotal)}</p>
+            <p className="text-2xl font-bold text-orange-700">{formatCurrency(summary.maheshTotal)}</p>
           </CardContent>
         </Card>
       </div>
@@ -529,6 +574,14 @@ export default function ExpensesPage() {
               </TableBody>
             </Table>
           </div>
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            totalItems={totalExpenses}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         </CardContent>
       </Card>
     </div>

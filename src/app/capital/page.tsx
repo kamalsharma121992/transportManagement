@@ -15,6 +15,9 @@ import {
 } from '@/components/ui/dialog';
 import { Plus, Pencil, Trash2, CheckCircle2, Clock } from 'lucide-react';
 import { toast } from 'sonner';
+import { PaginationControls } from '@/components/pagination-controls';
+import { useServerPagination } from '@/hooks/use-server-pagination';
+import { getSupabaseRange } from '@/lib/pagination';
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -39,17 +42,58 @@ export default function CapitalPage() {
   const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterContributor, setFilterContributor] = useState('');
+  const [summary, setSummary] = useState({
+    total: 0,
+    paidTotal: 0,
+    unpaidTotal: 0,
+    contributorTotals: {} as Record<string, { total: number; paid: number; unpaid: number }>,
+  });
+
+  const {
+    page,
+    pageSize,
+    setPage,
+    setPageSize,
+    totalItems: totalContributionsCount,
+    setTotalItems: setTotalContributionsCount,
+    totalPages,
+  } = useServerPagination([filterStatus, filterContributor]);
 
   async function fetchData() {
-    let query = supabase.from('capital_contributions').select('*').order('date', { ascending: false });
-    if (filterStatus) query = query.eq('status', filterStatus);
-    if (filterContributor) query = query.eq('contributor', filterContributor);
-    const { data } = await query;
+    setLoading(true);
+    const { from, to } = getSupabaseRange(page, pageSize);
+
+    let listQuery = supabase.from('capital_contributions').select('*', { count: 'exact' }).order('date', { ascending: false });
+    if (filterStatus) listQuery = listQuery.eq('status', filterStatus);
+    if (filterContributor) listQuery = listQuery.eq('contributor', filterContributor);
+    const { data, count } = await listQuery.range(from, to);
+
+    let summaryQuery = supabase.from('capital_contributions').select('value, status, contributor');
+    if (filterStatus) summaryQuery = summaryQuery.eq('status', filterStatus);
+    if (filterContributor) summaryQuery = summaryQuery.eq('contributor', filterContributor);
+    const { data: summaryRows } = await summaryQuery;
+
+    const contributorTotals: Record<string, { total: number; paid: number; unpaid: number }> = {};
+    (summaryRows || []).forEach((c) => {
+      if (!contributorTotals[c.contributor]) contributorTotals[c.contributor] = { total: 0, paid: 0, unpaid: 0 };
+      const amt = Number(c.value);
+      contributorTotals[c.contributor].total += amt;
+      if (c.status === 'Paid') contributorTotals[c.contributor].paid += amt;
+      else contributorTotals[c.contributor].unpaid += amt;
+    });
+
     setContributions(data || []);
+    setTotalContributionsCount(count ?? 0);
+    setSummary({
+      total: (summaryRows || []).reduce((sum, c) => sum + Number(c.value), 0),
+      paidTotal: (summaryRows || []).filter((c) => c.status === 'Paid').reduce((sum, c) => sum + Number(c.value), 0),
+      unpaidTotal: (summaryRows || []).filter((c) => c.status !== 'Paid').reduce((sum, c) => sum + Number(c.value), 0),
+      contributorTotals,
+    });
     setLoading(false);
   }
 
-  useEffect(() => { fetchData(); }, [filterStatus, filterContributor]);
+  useEffect(() => { fetchData(); }, [page, pageSize, filterStatus, filterContributor]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -124,19 +168,7 @@ export default function CapitalPage() {
     fetchData();
   }
 
-  // Summary
-  const totalContributions = contributions.reduce((sum, c) => sum + Number(c.value), 0);
-  const paidTotal = contributions.filter(c => c.status === 'Paid').reduce((sum, c) => sum + Number(c.value), 0);
-  const unpaidTotal = contributions.filter(c => c.status !== 'Paid').reduce((sum, c) => sum + Number(c.value), 0);
-
-  const contributorTotals: Record<string, { total: number; paid: number; unpaid: number }> = {};
-  contributions.forEach((c) => {
-    if (!contributorTotals[c.contributor]) contributorTotals[c.contributor] = { total: 0, paid: 0, unpaid: 0 };
-    const amt = Number(c.value);
-    contributorTotals[c.contributor].total += amt;
-    if (c.status === 'Paid') contributorTotals[c.contributor].paid += amt;
-    else contributorTotals[c.contributor].unpaid += amt;
-  });
+  const contributorTotals = summary.contributorTotals;
 
   return (
     <div className="space-y-4">
@@ -219,7 +251,7 @@ export default function CapitalPage() {
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Total Contributed</p>
-            <p className="text-2xl font-bold text-gray-900">{formatCurrency(totalContributions)}</p>
+            <p className="text-2xl font-bold text-gray-900">{formatCurrency(summary.total)}</p>
             <p className="text-xs text-gray-400">{contributions.length} entries</p>
           </CardContent>
         </Card>
@@ -229,7 +261,7 @@ export default function CapitalPage() {
               <CheckCircle2 className="h-4 w-4 text-green-600" />
               <p className="text-xs text-green-600 uppercase tracking-wide">Paid Back</p>
             </div>
-            <p className="text-2xl font-bold text-green-700">{formatCurrency(paidTotal)}</p>
+            <p className="text-2xl font-bold text-green-700">{formatCurrency(summary.paidTotal)}</p>
           </CardContent>
         </Card>
         <Card className="border-amber-200">
@@ -238,7 +270,7 @@ export default function CapitalPage() {
               <Clock className="h-4 w-4 text-amber-600" />
               <p className="text-xs text-amber-600 uppercase tracking-wide">Unpaid</p>
             </div>
-            <p className="text-2xl font-bold text-amber-700">{formatCurrency(unpaidTotal)}</p>
+            <p className="text-2xl font-bold text-amber-700">{formatCurrency(summary.unpaidTotal)}</p>
           </CardContent>
         </Card>
       </div>
@@ -360,6 +392,14 @@ export default function CapitalPage() {
               </TableBody>
             </Table>
           </div>
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            totalItems={totalContributionsCount}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         </CardContent>
       </Card>
     </div>

@@ -14,6 +14,9 @@ import {
 } from '@/components/ui/dialog';
 import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake } from 'lucide-react';
 import { toast } from 'sonner';
+import { PaginationControls } from '@/components/pagination-controls';
+import { useServerPagination } from '@/hooks/use-server-pagination';
+import { getSupabaseRange } from '@/lib/pagination';
 
 type Tab = 'routes' | 'drivers' | 'partners';
 
@@ -25,12 +28,30 @@ function RoutesSection() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0 });
 
+  const {
+    page,
+    pageSize,
+    setPage,
+    setPageSize,
+    totalItems: totalRoutes,
+    setTotalItems: setTotalRoutes,
+    totalPages,
+  } = useServerPagination();
+
   async function fetch() {
-    const { data } = await supabase.from('routes').select('*').order('route_name');
+    setLoading(true);
+    const { from, to } = getSupabaseRange(page, pageSize);
+    const { data, count } = await supabase
+      .from('routes')
+      .select('*', { count: 'exact' })
+      .order('route_name')
+      .range(from, to);
     setRoutes(data || []);
+    setTotalRoutes(count ?? 0);
     setLoading(false);
   }
-  useEffect(() => { fetch(); }, []);
+
+  useEffect(() => { fetch(); }, [page, pageSize]);
 
   function autoName(origin: string, destination: string) {
     const name = origin && destination ? `${origin.toLowerCase()}-${destination.toLowerCase()}` : '';
@@ -70,7 +91,7 @@ function RoutesSection() {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <p className="text-sm text-gray-500">{routes.length} routes</p>
+        <p className="text-sm text-gray-500">{totalRoutes} routes</p>
         <Button size="sm" onClick={() => { setEditingId(null); setForm({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0 }); setDialogOpen(true); }}>
           <Plus className="h-4 w-4 mr-1" /> Add Route
         </Button>
@@ -140,6 +161,14 @@ function RoutesSection() {
               ))}
             </TableBody>
           </Table>
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            totalItems={totalRoutes}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         </CardContent>
       </Card>
     </div>
@@ -154,12 +183,30 @@ function DriversSection() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({ name: '', phone: '' });
 
+  const {
+    page,
+    pageSize,
+    setPage,
+    setPageSize,
+    totalItems: totalDrivers,
+    setTotalItems: setTotalDrivers,
+    totalPages,
+  } = useServerPagination();
+
   async function fetch() {
-    const { data } = await supabase.from('drivers').select('*').order('name');
+    setLoading(true);
+    const { from, to } = getSupabaseRange(page, pageSize);
+    const { data, count } = await supabase
+      .from('drivers')
+      .select('*', { count: 'exact' })
+      .order('name')
+      .range(from, to);
     setDrivers(data || []);
+    setTotalDrivers(count ?? 0);
     setLoading(false);
   }
-  useEffect(() => { fetch(); }, []);
+
+  useEffect(() => { fetch(); }, [page, pageSize]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -197,7 +244,7 @@ function DriversSection() {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <p className="text-sm text-gray-500">{drivers.length} drivers</p>
+        <p className="text-sm text-gray-500">{totalDrivers} drivers</p>
         <Button size="sm" onClick={() => { setEditingId(null); setForm({ name: '', phone: '' }); setDialogOpen(true); }}>
           <Plus className="h-4 w-4 mr-1" /> Add Driver
         </Button>
@@ -247,6 +294,14 @@ function DriversSection() {
               ))}
             </TableBody>
           </Table>
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            totalItems={totalDrivers}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         </CardContent>
       </Card>
     </div>
@@ -255,17 +310,47 @@ function DriversSection() {
 
 // ─── Partners Section ───
 function PartnersSection() {
-  const [partners, setPartners] = useState<Partner[]>([]);
+  const [corePartners, setCorePartners] = useState<Partner[]>([]);
+  const [others, setOthers] = useState<Partner[]>([]);
+  const [totalPartners, setTotalPartners] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({ name: '' });
 
+  const {
+    page,
+    pageSize,
+    setPage,
+    setPageSize,
+    totalItems: totalOthers,
+    setTotalItems: setTotalOthers,
+    totalPages,
+  } = useServerPagination();
+
+  const coreNames = [...PAID_BY_ENTITIES, ...JM_PARTNERS];
+
   async function fetch() {
-    const { data } = await supabase.from('partners').select('*').order('name');
-    setPartners(data || []);
+    setLoading(true);
+    const { from, to } = getSupabaseRange(page, pageSize);
+
+    const [{ data: core }, { data: otherRows, count }, { count: allCount }] = await Promise.all([
+      supabase.from('partners').select('*').in('name', coreNames).order('name'),
+      (() => {
+        let q = supabase.from('partners').select('*', { count: 'exact' }).order('name');
+        for (const name of coreNames) q = q.neq('name', name);
+        return q.range(from, to);
+      })(),
+      supabase.from('partners').select('*', { count: 'exact', head: true }),
+    ]);
+
+    setCorePartners(core || []);
+    setOthers(otherRows || []);
+    setTotalOthers(count ?? 0);
+    setTotalPartners(allCount ?? 0);
     setLoading(false);
   }
-  useEffect(() => { fetch(); }, []);
+
+  useEffect(() => { fetch(); }, [page, pageSize]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -289,14 +374,13 @@ function PartnersSection() {
     fetch();
   }
 
-  const entities = partners.filter(p => PAID_BY_ENTITIES.includes(p.name as any));
-  const jmPartners = partners.filter(p => (JM_PARTNERS as readonly string[]).includes(p.name));
-  const others = partners.filter(p => !PAID_BY_ENTITIES.includes(p.name as any) && !(JM_PARTNERS as readonly string[]).includes(p.name));
+  const entities = corePartners.filter(p => PAID_BY_ENTITIES.includes(p.name as typeof PAID_BY_ENTITIES[number]));
+  const jmPartners = corePartners.filter(p => (JM_PARTNERS as readonly string[]).includes(p.name));
 
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <p className="text-sm text-gray-500">{partners.length} partners</p>
+        <p className="text-sm text-gray-500">{totalPartners} partners</p>
         <Button size="sm" onClick={() => { setForm({ name: '' }); setDialogOpen(true); }}>
           <Plus className="h-4 w-4 mr-1" /> Add Partner
         </Button>
@@ -358,6 +442,14 @@ function PartnersSection() {
               ))}
             </TableBody>
           </Table>
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            totalItems={totalOthers}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         </CardContent>
       </Card>
     </div>

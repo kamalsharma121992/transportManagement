@@ -13,6 +13,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Plus, Pencil, Trash2, Truck, Car } from 'lucide-react';
 import { toast } from 'sonner';
+import { PaginationControls } from '@/components/pagination-controls';
+import { useServerPagination } from '@/hooks/use-server-pagination';
+import { getSupabaseRange } from '@/lib/pagination';
 
 const emptyForm = {
   vehicle_number: '',
@@ -33,17 +36,32 @@ export default function VehiclesPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
 
+  const {
+    page,
+    pageSize,
+    setPage,
+    setPageSize,
+    totalItems: totalVehicles,
+    setTotalItems: setTotalVehicles,
+    totalPages,
+  } = useServerPagination();
+
   async function fetchVehicles() {
-    const [{ data: veh }, { data: bank }] = await Promise.all([
-      supabase.from('vehicles').select('*').order('vehicle_number'),
+    setLoading(true);
+    const { from, to } = getSupabaseRange(page, pageSize);
+    const [{ data: veh, count }, { data: bank }] = await Promise.all([
+      supabase.from('vehicles').select('*', { count: 'exact' }).order('vehicle_number').range(from, to),
       supabase.from('banking_information').select('*'),
     ]);
     setVehicles(veh || []);
+    setTotalVehicles(count ?? 0);
     setBanking(bank || []);
     setLoading(false);
   }
 
-  useEffect(() => { fetchVehicles(); }, []);
+  useEffect(() => {
+    fetchVehicles();
+  }, [page, pageSize]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -147,7 +165,8 @@ export default function VehiclesPage() {
       </div>
 
       {/* Vehicle Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {loading ? (
           <div className="col-span-full text-center py-8">Loading...</div>
         ) : vehicles.length === 0 ? (
@@ -204,6 +223,19 @@ export default function VehiclesPage() {
               </Card>
             );
           })
+        )}
+        </div>
+        {!loading && vehicles.length > 0 && (
+          <Card>
+            <PaginationControls
+              page={page}
+              pageSize={pageSize}
+              totalItems={totalVehicles}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
+          </Card>
         )}
       </div>
     </div>
