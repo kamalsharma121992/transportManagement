@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { supabase, Expense, ExpenseType, EXPENSE_TYPES, CATEGORIES_BY_TYPE, ALL_CATEGORIES, JM_PARTNERS, PAYMENT_SOURCES } from '@/lib/supabase';
+import { supabase, Expense, ExpenseType, EXPENSE_TYPES, JM_PARTNERS, PAYMENT_SOURCES } from '@/lib/supabase';
+import {
+  buildAllCategoryNames,
+  buildCategoriesByType,
+  DEFAULT_CATEGORIES_BY_TYPE,
+  fetchExpenseCategories,
+} from '@/lib/expense-categories';
 import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -74,6 +80,10 @@ export default function ExpensesPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [showFilters, setShowFilters] = useState(false);
+  const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);
+  const [allCategories, setAllCategories] = useState<string[]>(
+    buildAllCategoryNames(DEFAULT_CATEGORIES_BY_TYPE),
+  );
 
   // Filters — default to current month
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -206,6 +216,15 @@ export default function ExpensesPage() {
   }, [searchParams, router]);
 
   useEffect(() => {
+    fetchExpenseCategories().then(({ data, error }) => {
+      if (error) toast.error('Failed to load categories: ' + error);
+      const byType = buildCategoriesByType(data);
+      setCategoriesByType(byType);
+      setAllCategories(buildAllCategoryNames(byType));
+    });
+  }, []);
+
+  useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
       setVehicles((data || []).map((v: { vehicle_number: string }) => v.vehicle_number));
     });
@@ -215,7 +234,7 @@ export default function ExpensesPage() {
   }, []);
 
   function handleTypeChange(type: ExpenseType) {
-    const categories = CATEGORIES_BY_TYPE[type];
+    const categories = categoriesByType[type];
     setForm((f) => ({
       ...f,
       expense_type: type,
@@ -294,7 +313,7 @@ export default function ExpensesPage() {
     fetchExpenses();
   }
 
-  const availableCategories = form.expense_type ? CATEGORIES_BY_TYPE[form.expense_type] : [];
+  const availableCategories = form.expense_type ? categoriesByType[form.expense_type] : [];
 
   return (
     <div className="space-y-4">
@@ -516,7 +535,7 @@ export default function ExpensesPage() {
                   <label className="text-xs text-gray-500 mb-1 block">Category</label>
                   <select className={FILTER_SELECT_CLASS} value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
                     <option value="">All</option>
-                    {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {allCategories.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div className="min-w-0">

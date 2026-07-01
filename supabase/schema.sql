@@ -124,6 +124,18 @@ CREATE INDEX IF NOT EXISTS idx_expenses_vehicle ON expenses(vehicle_number);
 CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(category);
 CREATE INDEX IF NOT EXISTS idx_capital_contributions_date ON capital_contributions(date);
 
+-- Expense categories (managed in Admin)
+CREATE TABLE IF NOT EXISTS expense_categories (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  expense_type expense_type NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (name, expense_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_expense_categories_type ON expense_categories(expense_type);
+
 -- Enable Row Level Security (open for now - add auth policies later)
 ALTER TABLE partners ENABLE ROW LEVEL SECURITY;
 ALTER TABLE drivers ENABLE ROW LEVEL SECURITY;
@@ -133,6 +145,7 @@ ALTER TABLE trips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE capital_contributions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE banking_information ENABLE ROW LEVEL SECURITY;
+ALTER TABLE expense_categories ENABLE ROW LEVEL SECURITY;
 
 -- Allow public access (no auth required for now)
 CREATE POLICY "Allow all on partners" ON partners FOR ALL USING (true) WITH CHECK (true);
@@ -143,6 +156,30 @@ CREATE POLICY "Allow all on trips" ON trips FOR ALL USING (true) WITH CHECK (tru
 CREATE POLICY "Allow all on expenses" ON expenses FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on capital_contributions" ON capital_contributions FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on banking_information" ON banking_information FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all on expense_categories" ON expense_categories FOR ALL USING (true) WITH CHECK (true);
+
+INSERT INTO expense_categories (name, expense_type, sort_order) VALUES
+  ('Fuel (Diesel)', 'vehicle', 1),
+  ('Toll Taxes', 'vehicle', 2),
+  ('Maintenance', 'vehicle', 3),
+  ('Insurance', 'vehicle', 4),
+  ('EMI / Loan Payments', 'vehicle', 5),
+  ('Driver Salary', 'vehicle', 6),
+  ('Others', 'vehicle', 7),
+  ('Meals', 'operational', 1),
+  ('Hotel Stay', 'operational', 2),
+  ('Rent', 'operational', 3),
+  ('Supplies', 'operational', 4),
+  ('Daily Allowance', 'operational', 5),
+  ('Advance', 'operational', 6),
+  ('Salary', 'operational', 7),
+  ('Partner Allowance', 'operational', 8),
+  ('Office Expense', 'operational', 9),
+  ('Credit Card Payment', 'operational', 10),
+  ('Personal Care', 'personal', 1),
+  ('Other', 'personal', 2),
+  ('Other', 'other', 1)
+ON CONFLICT (name, expense_type) DO NOTHING;
 
 -- Dashboard stats RPC (aggregates in DB — run this if upgrading an existing project)
 CREATE OR REPLACE FUNCTION public.dashboard_stats(

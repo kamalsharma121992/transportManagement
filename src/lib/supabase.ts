@@ -119,18 +119,10 @@ export const EXPENSE_TYPES: { value: ExpenseType; label: string }[] = [
   { value: 'personal', label: 'Personal' },
 ];
 
-export const CATEGORIES_BY_TYPE: Record<ExpenseType, string[]> = {
-  vehicle: ['Fuel (Diesel)', 'Toll Taxes', 'Maintenance', 'Insurance', 'EMI / Loan Payments', 'Driver Salary', 'Others'],
-  operational: ['Meals', 'Hotel Stay', 'Rent', 'Supplies', 'Daily Allowance', 'Advance', 'Salary', 'Partner Allowance', 'Office Expense', 'Credit Card Payment'],
-  personal: ['Personal Care', 'Other'],
-  other: ['Other'],
-};
-
-export const ALL_CATEGORIES = [
-  'Fuel (Diesel)', 'Toll Taxes', 'Maintenance', 'Insurance', 'EMI / Loan Payments',
-  'Driver Salary', 'Meals', 'Hotel Stay', 'Rent', 'Supplies', 'Daily Allowance',
-  'Advance', 'Salary', 'Partner Allowance', 'Office Expense', 'Credit Card Payment', 'Personal Care', 'Others', 'Other',
-] as const;
+export {
+  DEFAULT_CATEGORIES_BY_TYPE as CATEGORIES_BY_TYPE,
+  DEFAULT_ALL_CATEGORIES as ALL_CATEGORIES,
+} from './expense-categories';
 
 // 2 paying entities
 export const PAID_BY_ENTITIES = ['JM transport', 'Mahesh'] as const;

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, Route, Driver, Partner, JM_PARTNERS, PAID_BY_ENTITIES } from '@/lib/supabase';
+import { supabase, Route, Driver, Partner, JM_PARTNERS, PAID_BY_ENTITIES, EXPENSE_TYPES, type ExpenseType } from '@/lib/supabase';
+import { type ExpenseCategory } from '@/lib/expense-categories';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,14 +14,14 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake, UserX } from 'lucide-react';
+import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake, UserX, Tags } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 
-type Tab = 'routes' | 'drivers' | 'partners';
+type Tab = 'routes' | 'drivers' | 'partners' | 'categories';
 
 // ─── Routes Section ───
 function RoutesSection() {
@@ -591,6 +592,226 @@ function PartnersSection() {
   );
 }
 
+const typeColors: Record<ExpenseType, string> = {
+  vehicle: 'bg-blue-100 text-blue-800',
+  operational: 'bg-green-100 text-green-800',
+  personal: 'bg-purple-100 text-purple-800',
+  other: 'bg-gray-100 text-gray-800',
+};
+
+const emptyCategoryForm = {
+  name: '',
+  expense_type: 'operational' as ExpenseType,
+  sort_order: '0',
+};
+
+// ─── Categories Section ───
+function CategoriesSection() {
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [filterType, setFilterType] = useState<ExpenseType | ''>('');
+  const [form, setForm] = useState(emptyCategoryForm);
+
+  async function fetchCategories() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('expense_categories')
+      .select('id, name, expense_type, sort_order')
+      .order('expense_type')
+      .order('sort_order')
+      .order('name');
+
+    if (error) {
+      if (error.message.includes('expense_categories') || error.message.includes('schema cache')) {
+        toast.error('Categories table not found. Run supabase/expense_categories.sql in Supabase SQL Editor.');
+      } else {
+        toast.error(error.message);
+      }
+      setCategories([]);
+    } else {
+      setCategories((data as ExpenseCategory[]) || []);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { fetchCategories(); }, []);
+
+  const filtered = filterType
+    ? categories.filter((c) => c.expense_type === filterType)
+    : categories;
+
+  const typeLabel = (type: ExpenseType) =>
+    EXPENSE_TYPES.find((t) => t.value === type)?.label ?? type;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const payload = {
+      name: form.name.trim(),
+      expense_type: form.expense_type,
+      sort_order: Number(form.sort_order) || 0,
+    };
+    if (!payload.name) {
+      toast.error('Category name is required');
+      return;
+    }
+
+    if (editingId) {
+      const { error } = await supabase.from('expense_categories').update(payload).eq('id', editingId);
+      if (error) { toast.error(error.message); return; }
+      toast.success('Category updated');
+    } else {
+      const { error } = await supabase.from('expense_categories').insert(payload);
+      if (error) { toast.error(error.message); return; }
+      toast.success('Category added');
+    }
+    setDialogOpen(false);
+    setEditingId(null);
+    setForm(emptyCategoryForm);
+    fetchCategories();
+  }
+
+  function startEdit(c: ExpenseCategory) {
+    setEditingId(c.id);
+    setForm({
+      name: c.name,
+      expense_type: c.expense_type,
+      sort_order: String(c.sort_order),
+    });
+    setDialogOpen(true);
+  }
+
+  async function handleDelete(c: ExpenseCategory) {
+    const { count } = await supabase
+      .from('expenses')
+      .select('*', { count: 'exact', head: true })
+      .eq('category', c.name);
+
+    if (count && count > 0) {
+      toast.error(`Cannot delete "${c.name}" — ${count} expense(s) use this category`);
+      return;
+    }
+    if (!confirm(`Delete category "${c.name}"?`)) return;
+
+    const { error } = await supabase.from('expense_categories').delete().eq('id', c.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success('Category deleted');
+    fetchCategories();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+        <p className="text-sm text-gray-500">{categories.length} categories</p>
+        <Button size="sm" onClick={() => {
+          setEditingId(null);
+          setForm(emptyCategoryForm);
+          setDialogOpen(true);
+        }}>
+          <Plus className="h-4 w-4 mr-1" /> Add Category
+        </Button>
+        <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader><DialogTitle>{editingId ? 'Edit Category' : 'New Category'}</DialogTitle></DialogHeader>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <Label>Name</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+              </div>
+              <div>
+                <Label>Expense Type</Label>
+                <select
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={form.expense_type}
+                  onChange={(e) => setForm({ ...form, expense_type: e.target.value as ExpenseType })}
+                >
+                  {EXPENSE_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <Label>Sort Order</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={form.sort_order}
+                  onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
+                />
+              </div>
+              <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Category</Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit flex-wrap">
+        <button
+          onClick={() => setFilterType('')}
+          className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === '' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          All
+        </button>
+        {EXPENSE_TYPES.map((t) => (
+          <button
+            key={t.value}
+            onClick={() => setFilterType(t.value)}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === t.value ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            {t.label}
+          </button>
+        ))}
+        <button
+          onClick={() => setFilterType('other')}
+          className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === 'other' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          Other
+        </button>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="text-right">Order</TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow><TableCell colSpan={4} className="text-center py-6">Loading...</TableCell></TableRow>
+              ) : filtered.length === 0 ? (
+                <TableRow><TableCell colSpan={4} className="text-center py-6 text-gray-500">No categories</TableCell></TableRow>
+              ) : filtered.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell className="font-medium">{c.name}</TableCell>
+                  <TableCell>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${typeColors[c.expense_type]}`}>
+                      {typeLabel(c.expense_type)}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right">{c.sort_order}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1 justify-end">
+                      <Button variant="ghost" size="icon" onClick={() => startEdit(c)}><Pencil className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(c)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Main Admin Page ───
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('routes');
@@ -599,6 +820,7 @@ export default function AdminPage() {
     { value: 'routes', label: 'Routes', icon: RouteIcon },
     { value: 'drivers', label: 'Drivers', icon: Users },
     { value: 'partners', label: 'Partners', icon: Handshake },
+    { value: 'categories', label: 'Categories', icon: Tags },
   ];
 
   return (
@@ -623,6 +845,7 @@ export default function AdminPage() {
       {tab === 'routes' && <RoutesSection />}
       {tab === 'drivers' && <DriversSection />}
       {tab === 'partners' && <PartnersSection />}
+      {tab === 'categories' && <CategoriesSection />}
     </div>
   );
 }

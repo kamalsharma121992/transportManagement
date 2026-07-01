@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, ExpenseType, EXPENSE_TYPES, CATEGORIES_BY_TYPE, JM_PARTNERS } from '@/lib/supabase';
+import { supabase, ExpenseType, EXPENSE_TYPES, JM_PARTNERS } from '@/lib/supabase';
+import {
+  buildCategoriesByType,
+  DEFAULT_CATEGORIES_BY_TYPE,
+  fetchExpenseCategories,
+} from '@/lib/expense-categories';
 import { formatCurrency } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,6 +38,13 @@ export default function SubmitExpensePage() {
   const [submitted, setSubmitted] = useState(false);
   const [submittedId, setSubmittedId] = useState<number | null>(null);
   const [submittedForm, setSubmittedForm] = useState(emptyForm);
+  const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);
+
+  useEffect(() => {
+    fetchExpenseCategories().then(({ data }) => {
+      setCategoriesByType(buildCategoriesByType(data));
+    });
+  }, []);
 
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
@@ -44,7 +56,7 @@ export default function SubmitExpensePage() {
   }, []);
 
   function handleTypeChange(type: ExpenseType) {
-    const categories = CATEGORIES_BY_TYPE[type];
+    const categories = categoriesByType[type];
     setForm((f) => ({
       ...f,
       expense_type: type,
@@ -145,7 +157,7 @@ export default function SubmitExpensePage() {
     setForm({ ...emptyForm, date: new Date().toISOString().split('T')[0] });
   }
 
-  const availableCategories = CATEGORIES_BY_TYPE[form.expense_type] || [];
+  const availableCategories = categoriesByType[form.expense_type] || [];
 
   const typeColors: Record<string, string> = {
     vehicle: 'bg-blue-600 text-white',
