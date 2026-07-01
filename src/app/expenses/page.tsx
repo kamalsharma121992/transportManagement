@@ -82,6 +82,7 @@ export default function ExpensesPage() {
   const [filterPerson, setFilterPerson] = useState('');
   const [filterPaidByPerson, setFilterPaidByPerson] = useState('');
   const [filterPaidBy, setFilterPaidBy] = useState('');
+  const [filterPaymentSource, setFilterPaymentSource] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterMonth, setFilterMonth] = useState(currentMonth);
@@ -100,7 +101,7 @@ export default function ExpensesPage() {
     totalPages,
   } = useServerPagination([
     filterType, filterVehicle, filterCategory, filterPerson,
-    filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth, searchQuery,
+    filterPaidByPerson, filterPaidBy, filterPaymentSource, filterDateFrom, filterDateTo, filterMonth, searchQuery,
     sortColumn, sortDirection,
   ]);
 
@@ -117,6 +118,7 @@ export default function ExpensesPage() {
     if (filterPerson) q = q.eq('person', filterPerson);
     if (filterPaidByPerson) q = q.eq('paid_by_person', filterPaidByPerson);
     if (filterPaidBy) q = q.eq('paid_by', filterPaidBy);
+    if (filterPaymentSource) q = q.eq('payment_source', filterPaymentSource);
     if (filterMonth) {
       const [y, m] = filterMonth.split('-');
       const start = `${y}-${m}-01`;
@@ -160,11 +162,12 @@ export default function ExpensesPage() {
     setLoading(false);
   }
 
-  const hasActiveFilters = filterMonth !== currentMonth || !!filterType || !!filterVehicle || !!filterCategory || !!filterPerson || !!filterPaidByPerson || !!filterPaidBy || !!filterDateFrom || !!filterDateTo || !!searchQuery;
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterType || !!filterVehicle || !!filterCategory || !!filterPerson || !!filterPaidByPerson || !!filterPaidBy || !!filterPaymentSource || !!filterDateFrom || !!filterDateTo || !!searchQuery;
 
   function clearFilters() {
     setFilterType(''); setFilterVehicle(''); setFilterCategory('');
     setFilterPerson(''); setFilterPaidByPerson(''); setFilterPaidBy('');
+    setFilterPaymentSource('');
     setFilterDateFrom(''); setFilterDateTo(''); setFilterMonth(currentMonth);
     setSearchInput('');
   }
@@ -185,11 +188,12 @@ export default function ExpensesPage() {
   if (filterPerson) activeFilterLabels.push('Given to: ' + filterPerson);
   if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
   if (filterCategory) activeFilterLabels.push('Category: ' + filterCategory);
+  if (filterPaymentSource) activeFilterLabels.push('Paid from: ' + filterPaymentSource);
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   useEffect(() => {
     fetchExpenses();
-  }, [page, pageSize, filterType, filterVehicle, filterCategory, filterPerson, filterPaidByPerson, filterPaidBy, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
+  }, [page, pageSize, filterType, filterVehicle, filterCategory, filterPerson, filterPaidByPerson, filterPaidBy, filterPaymentSource, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (searchParams.get('add') === '1') {
@@ -512,6 +516,13 @@ export default function ExpensesPage() {
                   <select className={FILTER_SELECT_CLASS} value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
                     <option value="">All</option>
                     {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Paid From</label>
+                  <select className={FILTER_SELECT_CLASS} value={filterPaymentSource} onChange={(e) => setFilterPaymentSource(e.target.value)}>
+                    <option value="">All</option>
+                    {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
               </div>
