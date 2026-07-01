@@ -10,7 +10,7 @@ import {
   formatCardOption,
   type CreditCard,
 } from '@/lib/credit-cards';
-import { formatCurrency, formatDate } from '@/lib/format';
+import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,10 +21,11 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Pencil, Trash2, CheckCircle2, Clock } from 'lucide-react';
+import { Plus, Pencil, Trash2, CheckCircle2, Clock, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
+import { ActiveFiltersBar } from '@/components/active-filters-bar';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
@@ -47,18 +48,25 @@ const emptyForm = {
 };
 
 export default function CapitalPage() {
+  const currentMonth = new Date().toISOString().slice(0, 7);
   const [contributions, setContributions] = useState<CapitalContribution[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [payDialogOpen, setPayDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [payingId, setPayingId] = useState<number | null>(null);
+  const [payingIds, setPayingIds] = useState<number[]>([]);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [cardsTableMissing, setCardsTableMissing] = useState(false);
   const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterContributor, setFilterContributor] = useState('');
+  const [filterMonth, setFilterMonth] = useState(currentMonth);
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterCreditCard, setFilterCreditCard] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput);
   const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
@@ -77,15 +85,30 @@ export default function CapitalPage() {
     totalItems: totalContributionsCount,
     setTotalItems: setTotalContributionsCount,
     totalPages,
-  } = useServerPagination([filterStatus, filterContributor, searchQuery, sortColumn, sortDirection]);
+  } = useServerPagination([
+    filterStatus, filterContributor, filterMonth, filterDateFrom, filterDateTo,
+    filterCreditCard, searchQuery, sortColumn, sortDirection,
+  ]);
 
   function applyCapitalFilters<Q>(query: Q): Q {
     let q = query as {
-      eq: (col: string, val: string) => typeof q;
+      eq: (col: string, val: string | number) => typeof q;
+      gte: (col: string, val: string) => typeof q;
+      lte: (col: string, val: string) => typeof q;
       or: (filter: string) => typeof q;
     };
     if (filterStatus) q = q.eq('status', filterStatus);
     if (filterContributor) q = q.eq('contributor', filterContributor);
+    if (filterCreditCard) q = q.eq('card_id', Number(filterCreditCard));
+    if (filterMonth) {
+      const [y, m] = filterMonth.split('-');
+      const start = `${y}-${m}-01`;
+      const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
+      q = q.gte('date', start).lte('date', end);
+    } else {
+      if (filterDateFrom) q = q.gte('date', filterDateFrom);
+      if (filterDateTo) q = q.lte('date', filterDateTo);
+    }
     const searchFilter = buildTextSearchFilter([...CAPITAL_SEARCH_COLUMNS], searchQuery);
     if (searchFilter) q = q.or(searchFilter);
     return q as Q;
@@ -132,7 +155,17 @@ export default function CapitalPage() {
     setLoading(false);
   }
 
-  useEffect(() => { fetchData(); }, [page, pageSize, filterStatus, filterContributor, searchQuery, sortColumn, sortDirection]);
+  useEffect(() => { fetchData(); }, [
+    page, pageSize, filterStatus, filterContributor, filterMonth, filterDateFrom,
+    filterDateTo, filterCreditCard, searchQuery, sortColumn, sortDirection,
+  ]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [
+    page, pageSize, filterStatus, filterContributor, filterMonth, filterDateFrom,
+    filterDateTo, filterCreditCard, searchQuery, sortColumn, sortDirection,
+  ]);
 
   useEffect(() => {
     fetchCreditCards().then(({ data, tableMissing }) => {
@@ -213,21 +246,67 @@ export default function CapitalPage() {
   }
 
   function startPay(c: CapitalContribution) {
-    setPayingId(c.id);
+    setPayingIds([c.id]);
     setPayForm({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
     setPayDialogOpen(true);
   }
 
+  function startBulkPay() {
+    const ids = selectedIds.filter((id) => {
+      const row = contributions.find((c) => c.id === id);
+      return row && row.status !== 'Paid';
+    });
+    if (ids.length === 0) {
+      toast.error('Select unpaid contributions to mark as paid');
+      return;
+    }
+    setPayingIds(ids);
+    setPayForm({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
+    setPayDialogOpen(true);
+  }
+
+  function toggleSelect(id: number) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  const unpaidOnPage = contributions.filter((c) => c.status !== 'Paid');
+  const allUnpaidOnPageSelected =
+    unpaidOnPage.length > 0 && unpaidOnPage.every((c) => selectedIds.includes(c.id));
+
+  function toggleSelectAllOnPage() {
+    if (allUnpaidOnPageSelected) {
+      const pageIds = new Set(unpaidOnPage.map((c) => c.id));
+      setSelectedIds((prev) => prev.filter((id) => !pageIds.has(id)));
+    } else {
+      setSelectedIds((prev) => [...new Set([...prev, ...unpaidOnPage.map((c) => c.id)])]);
+    }
+  }
+
+  const selectedUnpaidTotal = contributions
+    .filter((c) => selectedIds.includes(c.id) && c.status !== 'Paid')
+    .reduce((sum, c) => sum + Number(c.value), 0);
+
+  const payingTotal = contributions
+    .filter((c) => payingIds.includes(c.id))
+    .reduce((sum, c) => sum + Number(c.value), 0);
+
   async function handleMarkPaid(e: React.FormEvent) {
     e.preventDefault();
-    if (!payingId) return;
+    if (payingIds.length === 0) return;
+    const ids = payingIds;
     const { error } = await supabase.from('capital_contributions')
-      .update({ status: 'Paid', paid_date: payForm.paid_date, paid_by: payForm.paid_by, payment_source: payForm.payment_source })
-      .eq('id', payingId);
+      .update({
+        status: 'Paid',
+        paid_date: payForm.paid_date,
+        paid_by: payForm.paid_by,
+        payment_source: payForm.payment_source,
+      })
+      .in('id', ids);
     if (error) { toast.error(error.message); return; }
-    toast.success('Marked as paid');
+    toast.success(ids.length === 1 ? 'Marked as paid' : `${ids.length} contributions marked as paid`);
     setPayDialogOpen(false);
-    setPayingId(null);
+    setPayingIds([]);
+    setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
     fetchData();
   }
 
@@ -259,6 +338,42 @@ export default function CapitalPage() {
     return c.asset_details || '-';
   }
 
+  const hasActiveFilters =
+    filterMonth !== currentMonth ||
+    !!filterDateFrom ||
+    !!filterDateTo ||
+    !!filterStatus ||
+    !!filterContributor ||
+    !!filterCreditCard ||
+    !!searchQuery;
+
+  function clearFilters() {
+    setFilterMonth(currentMonth);
+    setFilterDateFrom('');
+    setFilterDateTo('');
+    setFilterStatus('');
+    setFilterContributor('');
+    setFilterCreditCard('');
+    setSearchInput('');
+  }
+
+  const activeFilterLabels: string[] = [];
+  if (filterMonth) {
+    const d = new Date(filterMonth + '-01');
+    activeFilterLabels.push(d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }));
+  } else if (!filterDateFrom && !filterDateTo) {
+    activeFilterLabels.push('All months');
+  }
+  if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
+  if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
+  if (filterStatus) activeFilterLabels.push('Status: ' + filterStatus);
+  if (filterContributor) activeFilterLabels.push('Contributor: ' + filterContributor);
+  if (filterCreditCard) {
+    const card = creditCards.find((c) => String(c.id) === filterCreditCard);
+    activeFilterLabels.push('Card: ' + (card ? formatCardLabel(card) : filterCreditCard));
+  }
+  if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -268,13 +383,9 @@ export default function CapitalPage() {
           onChange: setSearchInput,
           placeholder: 'Search contributor, description...',
         }}
-        hasActiveFilters={!!filterStatus || !!filterContributor || !!searchQuery}
-        onClearFilters={() => { setFilterStatus(''); setFilterContributor(''); setSearchInput(''); }}
-        filterLabels={[
-          ...(filterStatus ? [`Status: ${filterStatus}`] : []),
-          ...(filterContributor ? [`Contributor: ${filterContributor}`] : []),
-          ...(searchQuery ? [`Search: ${searchQuery}`] : []),
-        ]}
+        hasActiveFilters={hasActiveFilters}
+        onClearFilters={clearFilters}
+        clearFiltersLabel="Reset filters"
         actions={
           <Button onClick={() => { setEditingId(null); setForm(emptyForm); setDialogOpen(true); }}>
             <Plus className="h-4 w-4 mr-2" /> Add Contribution
@@ -357,11 +468,18 @@ export default function CapitalPage() {
         </Dialog>
 
         {/* Mark as Paid Dialog */}
-        <Dialog open={payDialogOpen} onOpenChange={(open) => { setPayDialogOpen(open); if (!open) setPayingId(null); }}>
+        <Dialog open={payDialogOpen} onOpenChange={(open) => { setPayDialogOpen(open); if (!open) setPayingIds([]); }}>
           <DialogContent className="max-w-sm">
             <DialogHeader>
-              <DialogTitle>Mark as Paid</DialogTitle>
+              <DialogTitle>
+                {payingIds.length > 1 ? `Mark ${payingIds.length} as Paid` : 'Mark as Paid'}
+              </DialogTitle>
             </DialogHeader>
+            {payingIds.length > 0 && (
+              <p className="text-sm text-gray-600">
+                Total: <span className="font-semibold text-green-700">{formatCurrency(payingTotal)}</span>
+              </p>
+            )}
             <form onSubmit={handleMarkPaid} className="space-y-4">
               <div>
                 <Label>Payment Date</Label>
@@ -377,6 +495,12 @@ export default function CapitalPage() {
             </form>
           </DialogContent>
         </Dialog>
+
+      <ActiveFiltersBar
+        labels={activeFilterLabels}
+        onClear={hasActiveFilters ? clearFilters : undefined}
+        clearLabel="Reset filters"
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -423,27 +547,95 @@ export default function CapitalPage() {
         ))}
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-3 flex-wrap">
-        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-          <button onClick={() => setFilterStatus('')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium ${filterStatus === '' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
-            All
-          </button>
-          <button onClick={() => setFilterStatus('Unpaid')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium ${filterStatus === 'Unpaid' ? 'bg-white shadow-sm text-amber-700' : 'text-gray-500'}`}>
-            Unpaid
-          </button>
-          <button onClick={() => setFilterStatus('Paid')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium ${filterStatus === 'Paid' ? 'bg-white shadow-sm text-green-700' : 'text-gray-500'}`}>
-            Paid
+      {/* Status + Advanced Filters */}
+      <div className="space-y-2">
+        <div className="flex gap-3 flex-wrap items-center">
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+            <button onClick={() => setFilterStatus('')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium ${filterStatus === '' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
+              All
+            </button>
+            <button onClick={() => setFilterStatus('Unpaid')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium ${filterStatus === 'Unpaid' ? 'bg-white shadow-sm text-amber-700' : 'text-gray-500'}`}>
+              Unpaid
+            </button>
+            <button onClick={() => setFilterStatus('Paid')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium ${filterStatus === 'Paid' ? 'bg-white shadow-sm text-green-700' : 'text-gray-500'}`}>
+              Paid
+            </button>
+          </div>
+          <button onClick={() => setShowFilters(!showFilters)}
+            className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900 font-medium">
+            {showFilters ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            Advanced Filters
+            {hasActiveFilters && <span className="ml-1 bg-blue-600 text-white text-xs rounded-full px-1.5 py-0.5">Active</span>}
           </button>
         </div>
-        <select className="border rounded-md px-3 py-2 text-sm" value={filterContributor} onChange={(e) => setFilterContributor(e.target.value)}>
-          <option value="">All Contributors</option>
-          {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
+
+        {showFilters && (
+          <Card>
+            <CardContent className="py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Month</label>
+                  <select
+                    className={FILTER_SELECT_CLASS}
+                    value={filterMonth}
+                    onChange={(e) => { setFilterMonth(e.target.value); setFilterDateFrom(''); setFilterDateTo(''); }}
+                  >
+                    {getMonthFilterOptions().map((opt) => (
+                      <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Date From</label>
+                  <Input className="min-w-0" type="date" value={filterDateFrom} onChange={(e) => { setFilterDateFrom(e.target.value); setFilterMonth(''); }} />
+                </div>
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Date To</label>
+                  <Input className="min-w-0" type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setFilterMonth(''); }} />
+                </div>
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Contributor</label>
+                  <select className={FILTER_SELECT_CLASS} value={filterContributor} onChange={(e) => setFilterContributor(e.target.value)}>
+                    <option value="">All</option>
+                    {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Credit Card</label>
+                  <select className={FILTER_SELECT_CLASS} value={filterCreditCard} onChange={(e) => setFilterCreditCard(e.target.value)}>
+                    <option value="">All cards</option>
+                    {creditCards.map((c) => (
+                      <option key={c.id} value={c.id}>{formatCardOption(c)}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {hasActiveFilters && (
+                <button onClick={clearFilters} className="mt-3 flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">
+                  <X className="h-3 w-3" /> Clear all filters
+                </button>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
+
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+          <span className="text-sm font-medium text-green-900">
+            {selectedIds.length} selected · {formatCurrency(selectedUnpaidTotal)} unpaid
+          </span>
+          <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={startBulkPay}>
+            <CheckCircle2 className="h-4 w-4 mr-1" /> Mark as Paid
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setSelectedIds([])}>
+            Clear selection
+          </Button>
+        </div>
+      )}
 
       {/* Table */}
       <Card>
@@ -452,6 +644,16 @@ export default function CapitalPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      checked={allUnpaidOnPageSelected}
+                      onChange={toggleSelectAllOnPage}
+                      disabled={unpaidOnPage.length === 0}
+                      aria-label="Select all unpaid on page"
+                      className="rounded border-gray-300"
+                    />
+                  </TableHead>
                   <SortableTableHead label="Date" column="date" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} />
                   <TableHead>Contributor</TableHead>
                   <TableHead>Type</TableHead>
@@ -466,12 +668,23 @@ export default function CapitalPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={10} className="text-center py-8">Loading...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={11} className="text-center py-8">Loading...</TableCell></TableRow>
                 ) : contributions.length === 0 ? (
-                  <TableRow><TableCell colSpan={10} className="text-center py-8 text-gray-500">No contributions found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={11} className="text-center py-8 text-gray-500">No contributions found</TableCell></TableRow>
                 ) : (
                   contributions.map((c) => (
-                    <TableRow key={c.id} className={c.status === 'Paid' ? 'bg-green-50/50' : ''}>
+                    <TableRow key={c.id} className={c.status === 'Paid' ? 'bg-green-50/50' : selectedIds.includes(c.id) ? 'bg-blue-50/40' : ''}>
+                      <TableCell>
+                        {c.status !== 'Paid' ? (
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(c.id)}
+                            onChange={() => toggleSelect(c.id)}
+                            aria-label={`Select contribution ${c.id}`}
+                            className="rounded border-gray-300"
+                          />
+                        ) : null}
+                      </TableCell>
                       <TableCell className="whitespace-nowrap">{formatDate(c.date)}</TableCell>
                       <TableCell className="font-medium">{c.contributor}</TableCell>
                       <TableCell>

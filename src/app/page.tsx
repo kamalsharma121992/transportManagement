@@ -12,6 +12,7 @@ import {
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/page-header';
+import { ActiveFiltersBar } from '@/components/active-filters-bar';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { Input } from '@/components/ui/input';
 import { ChevronDown, ChevronUp } from 'lucide-react';
@@ -163,7 +164,6 @@ export default function Dashboard() {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
         clearFiltersLabel="Reset filters"
-        filterLabels={activeFilterLabels}
       />
 
       {loading ? (
@@ -249,6 +249,11 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         )}
+        <ActiveFiltersBar
+          labels={activeFilterLabels}
+          onClear={hasActiveFilters ? clearFilters : undefined}
+          clearLabel="Reset filters"
+        />
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">

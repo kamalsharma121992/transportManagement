@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Plus, X } from 'lucide-react';
 import { TextSearchInput } from '@/components/text-search-input';
+import { ActiveFiltersBar } from '@/components/active-filters-bar';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -66,16 +67,7 @@ export function PageHeader({
       </div>
 
       {filterLabels.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {filterLabels.map((label) => (
-            <span
-              key={label}
-              className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs font-medium rounded-full"
-            >
-              {label}
-            </span>
-          ))}
-        </div>
+        <ActiveFiltersBar labels={filterLabels} />
       )}
     </div>
   );

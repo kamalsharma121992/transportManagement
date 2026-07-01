@@ -34,6 +34,7 @@ import { Pencil, Trash2, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
+import { ActiveFiltersBar } from '@/components/active-filters-bar';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
@@ -205,7 +206,10 @@ export default function ExpensesPage() {
   }
   if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
   if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
-  if (filterType) activeFilterLabels.push('Type: ' + filterType);
+  if (filterType) {
+    const typeLabel = EXPENSE_TYPES.find((t) => t.value === filterType)?.label ?? filterType;
+    activeFilterLabels.push('Type: ' + typeLabel);
+  }
   if (filterPaidBy) activeFilterLabels.push('Entity: ' + filterPaidBy);
   if (filterPaidByPerson) activeFilterLabels.push('Paid by: ' + filterPaidByPerson);
   if (filterPerson) activeFilterLabels.push('Given to: ' + filterPerson);
@@ -296,12 +300,18 @@ export default function ExpensesPage() {
       return;
     }
 
+    const useCard =
+      form.payment_source === 'Partner'
+      && payment_mode === 'Credit Card'
+      && cardId
+      && !cardsTableMissing;
+
     const payload = {
       ...rest,
       vehicle_number: form.expense_type === 'vehicle' ? form.vehicle_number : null,
       person: form.person || null,
       paid_by_person: form.paid_by_person || null,
-      ...(cardId && !cardsTableMissing ? { card_id: cardId } : {}),
+      card_id: useCard ? cardId : null,
     };
     if (editingId) {
       const { error } = await supabase.from('expenses').update(payload).eq('id', editingId);
@@ -320,7 +330,7 @@ export default function ExpensesPage() {
           value: Number(form.amount),
           description: form.description || form.category,
           asset_details: cardAssetDetails(selectedCard, card_details),
-          ...(cardId && !cardsTableMissing ? { card_id: cardId } : {}),
+          ...(useCard ? { card_id: cardId } : {}),
           status: 'Unpaid',
           paid_by: 'JM transport',
         });
@@ -351,7 +361,9 @@ export default function ExpensesPage() {
       paid_by: exp.paid_by,
       status: exp.status,
       payment_source: exp.payment_source || 'Partner',
-      payment_mode: 'Cash',
+      payment_mode: exp.card_id
+        ? 'Credit Card'
+        : paymentModeForCategory(exp.category),
       credit_card_id: exp.card_id ? String(exp.card_id) : '',
       card_details: '',
     });
@@ -380,7 +392,6 @@ export default function ExpensesPage() {
         }}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
-        filterLabels={activeFilterLabels}
       />
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setEditingId(null); setForm(emptyForm); } }}>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -462,7 +473,7 @@ export default function ExpensesPage() {
                     {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
-                {form.payment_source === 'Partner' && !editingId && (
+                {form.payment_source === 'Partner' && (
                   <>
                     <div>
                       <Label>Payment Mode</Label>
@@ -508,6 +519,12 @@ export default function ExpensesPage() {
             </form>
           </DialogContent>
         </Dialog>
+
+      <ActiveFiltersBar
+        labels={activeFilterLabels}
+        onClear={hasActiveFilters ? clearFilters : undefined}
+        clearLabel="Reset filters"
+      />
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

@@ -32,6 +32,7 @@ import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, Chevro
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
+import { ActiveFiltersBar } from '@/components/active-filters-bar';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
@@ -404,7 +405,6 @@ export default function TripsPage() {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
         clearFiltersLabel="Reset filters"
-        filterLabels={activeFilterLabels}
         actions={
           <>
             <input
@@ -424,6 +424,12 @@ export default function TripsPage() {
             <Button onClick={openNewTripDialog}><Plus className="h-4 w-4 mr-2" /> Add Trip</Button>
           </>
         }
+      />
+
+      <ActiveFiltersBar
+        labels={activeFilterLabels}
+        onClear={hasActiveFilters ? clearFilters : undefined}
+        clearLabel="Reset filters"
       />
 
       {/* Summary */}
