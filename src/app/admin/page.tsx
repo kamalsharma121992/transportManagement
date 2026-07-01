@@ -3,6 +3,11 @@
 import { useEffect, useState } from 'react';
 import { supabase, Route, Driver, Partner, JM_PARTNERS, PAID_BY_ENTITIES, EXPENSE_TYPES, type ExpenseType } from '@/lib/supabase';
 import { type ExpenseCategory } from '@/lib/expense-categories';
+import {
+  CARD_NETWORKS,
+  buildCardLabel,
+  type CreditCard as CreditCardRow,
+} from '@/lib/credit-cards';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,14 +19,14 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake, UserX, Tags } from 'lucide-react';
+import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake, UserX, Tags, CreditCard } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 
-type Tab = 'routes' | 'drivers' | 'partners' | 'categories';
+type Tab = 'routes' | 'drivers' | 'partners' | 'categories' | 'credit_cards';
 
 // ─── Routes Section ───
 function RoutesSection() {
@@ -592,6 +597,258 @@ function PartnersSection() {
   );
 }
 
+const emptyCreditCardForm = {
+  holder: '',
+  bank_name: '',
+  network: 'VISA' as (typeof CARD_NETWORKS)[number],
+  last_four: '',
+  label: '',
+  is_active: true,
+};
+
+// ─── Credit Cards Section ───
+function CreditCardsSection() {
+  const [cards, setCards] = useState<CreditCardRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [filterHolder, setFilterHolder] = useState('');
+  const [form, setForm] = useState(emptyCreditCardForm);
+  const [tableMissing, setTableMissing] = useState(false);
+
+  async function fetchCards() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('credit_cards')
+      .select('id, holder, bank_name, network, last_four, label, is_active')
+      .order('holder')
+      .order('bank_name')
+      .order('network');
+
+    if (error) {
+      if (error.message.includes('credit_cards') || error.message.includes('schema cache')) {
+        setTableMissing(true);
+        setCards([]);
+      } else {
+        toast.error(error.message);
+      }
+    } else {
+      setTableMissing(false);
+      setCards((data as CreditCardRow[]) || []);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { fetchCards(); }, []);
+
+  const filtered = filterHolder ? cards.filter((c) => c.holder === filterHolder) : cards;
+
+  function previewLabel(f: typeof emptyCreditCardForm) {
+    if (!f.holder || !f.bank_name || !f.network) return '';
+    return buildCardLabel(f.bank_name, f.network, f.holder, f.last_four);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const label = form.label.trim() || previewLabel(form);
+    if (!form.holder || !form.bank_name || !label) {
+      toast.error('Holder, bank, and network are required');
+      return;
+    }
+
+    const payload = {
+      holder: form.holder,
+      bank_name: form.bank_name.trim(),
+      network: form.network,
+      last_four: form.last_four.trim(),
+      label,
+      is_active: form.is_active,
+    };
+
+    if (editingId) {
+      const { error } = await supabase.from('credit_cards').update(payload).eq('id', editingId);
+      if (error) { toast.error(error.message); return; }
+      toast.success('Credit card updated');
+    } else {
+      const { error } = await supabase.from('credit_cards').insert(payload);
+      if (error) { toast.error(error.message); return; }
+      toast.success('Credit card added');
+    }
+    setDialogOpen(false);
+    setEditingId(null);
+    setForm(emptyCreditCardForm);
+    fetchCards();
+  }
+
+  function startEdit(card: CreditCardRow) {
+    setEditingId(card.id);
+    setForm({
+      holder: card.holder,
+      bank_name: card.bank_name,
+      network: card.network as (typeof CARD_NETWORKS)[number],
+      last_four: card.last_four,
+      label: card.label,
+      is_active: card.is_active,
+    });
+    setDialogOpen(true);
+  }
+
+  async function handleDelete(card: CreditCardRow) {
+    const [{ count: expCount }, { count: capCount }] = await Promise.all([
+      supabase.from('expenses').select('*', { count: 'exact', head: true }).eq('card_id', card.id),
+      supabase.from('capital_contributions').select('*', { count: 'exact', head: true }).eq('card_id', card.id),
+    ]);
+
+    if ((expCount || 0) + (capCount || 0) > 0) {
+      toast.error(`Cannot delete — used in ${expCount || 0} expense(s) and ${capCount || 0} capital row(s)`);
+      return;
+    }
+    if (!confirm(`Delete card "${card.label}"?`)) return;
+
+    const { error } = await supabase.from('credit_cards').delete().eq('id', card.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success('Credit card deleted');
+    fetchCards();
+  }
+
+  if (tableMissing) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center text-sm text-gray-600">
+          Credit cards table not found. Run <code className="text-xs bg-gray-100 px-1 rounded">supabase/credit_cards.sql</code> in Supabase SQL Editor.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+        <p className="text-sm text-gray-500">{cards.length} cards</p>
+        <Button size="sm" onClick={() => { setEditingId(null); setForm(emptyCreditCardForm); setDialogOpen(true); }}>
+          <Plus className="h-4 w-4 mr-1" /> Add Credit Card
+        </Button>
+        <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader><DialogTitle>{editingId ? 'Edit Credit Card' : 'New Credit Card'}</DialogTitle></DialogHeader>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <Label>Holder (Partner)</Label>
+                <select
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={form.holder}
+                  onChange={(e) => setForm({ ...form, holder: e.target.value, label: '' })}
+                  required
+                >
+                  <option value="">Select</option>
+                  {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Bank</Label>
+                  <Input value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value, label: '' })} placeholder="HDFC" required />
+                </div>
+                <div>
+                  <Label>Network</Label>
+                  <select
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={form.network}
+                    onChange={(e) => setForm({ ...form, network: e.target.value as (typeof CARD_NETWORKS)[number], label: '' })}
+                  >
+                    {CARD_NETWORKS.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <Label>Last 4 digits (optional)</Label>
+                <Input value={form.last_four} onChange={(e) => setForm({ ...form, last_four: e.target.value.replace(/\D/g, '').slice(0, 4), label: '' })} placeholder="4821" maxLength={4} />
+              </div>
+              <div>
+                <Label>Display label</Label>
+                <Input
+                  value={form.label}
+                  onChange={(e) => setForm({ ...form, label: e.target.value })}
+                  placeholder={previewLabel(form) || 'Auto-generated from bank + network + holder'}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
+                Active (show in expense forms)
+              </label>
+              <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Card</Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit flex-wrap">
+        <button
+          onClick={() => setFilterHolder('')}
+          className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterHolder === '' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          All
+        </button>
+        {JM_PARTNERS.map((p) => (
+          <button
+            key={p}
+            onClick={() => setFilterHolder(p)}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterHolder === p ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Label</TableHead>
+                <TableHead>Holder</TableHead>
+                <TableHead>Bank</TableHead>
+                <TableHead>Network</TableHead>
+                <TableHead>Last 4</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow><TableCell colSpan={7} className="text-center py-6">Loading...</TableCell></TableRow>
+              ) : filtered.length === 0 ? (
+                <TableRow><TableCell colSpan={7} className="text-center py-6 text-gray-500">No credit cards</TableCell></TableRow>
+              ) : filtered.map((card) => (
+                <TableRow key={card.id}>
+                  <TableCell className="font-medium">{card.label}</TableCell>
+                  <TableCell>{card.holder}</TableCell>
+                  <TableCell>{card.bank_name}</TableCell>
+                  <TableCell>{card.network}</TableCell>
+                  <TableCell>{card.last_four || <span className="text-gray-300">-</span>}</TableCell>
+                  <TableCell>
+                    {card.is_active ? (
+                      <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Active</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-gray-600">Inactive</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-1 justify-end">
+                      <Button variant="ghost" size="icon" onClick={() => startEdit(card)}><Pencil className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(card)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 const typeColors: Record<ExpenseType, string> = {
   vehicle: 'bg-blue-100 text-blue-800',
   operational: 'bg-green-100 text-green-800',
@@ -821,6 +1078,7 @@ export default function AdminPage() {
     { value: 'drivers', label: 'Drivers', icon: Users },
     { value: 'partners', label: 'Partners', icon: Handshake },
     { value: 'categories', label: 'Categories', icon: Tags },
+    { value: 'credit_cards', label: 'Credit Cards', icon: CreditCard },
   ];
 
   return (
@@ -846,6 +1104,7 @@ export default function AdminPage() {
       {tab === 'drivers' && <DriversSection />}
       {tab === 'partners' && <PartnersSection />}
       {tab === 'categories' && <CategoriesSection />}
+      {tab === 'credit_cards' && <CreditCardsSection />}
     </div>
   );
 }

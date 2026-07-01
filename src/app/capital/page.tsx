@@ -2,6 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { supabase, CapitalContribution, JM_PARTNERS, PAYMENT_SOURCES } from '@/lib/supabase';
+import {
+  cardAssetDetails,
+  fetchCreditCards,
+  filterCardsByHolder,
+  formatCardLabel,
+  formatCardOption,
+  type CreditCard,
+} from '@/lib/credit-cards';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,6 +40,7 @@ const emptyForm = {
   value: 0,
   description: '',
   asset_details: '',
+  credit_card_id: '',
   status: 'Unpaid',
   paid_date: '',
   paid_by: 'JM transport',
@@ -45,6 +54,8 @@ export default function CapitalPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [payingId, setPayingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
+  const [cardsTableMissing, setCardsTableMissing] = useState(false);
   const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterContributor, setFilterContributor] = useState('');
@@ -123,11 +134,51 @@ export default function CapitalPage() {
 
   useEffect(() => { fetchData(); }, [page, pageSize, filterStatus, filterContributor, searchQuery, sortColumn, sortDirection]);
 
+  useEffect(() => {
+    fetchCreditCards().then(({ data, tableMissing }) => {
+      setCreditCards(data);
+      setCardsTableMissing(tableMissing);
+    });
+  }, []);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const cardId = form.credit_card_id ? Number(form.credit_card_id) : null;
+    const selectedCard = creditCards.find((c) => c.id === cardId);
+
+    if (form.contribution_type === 'Credit Card') {
+      if (cardsTableMissing) {
+        toast.error('Credit cards not set up. Run supabase/credit_cards.sql in Supabase, then add cards in Admin.');
+        return;
+      }
+      if (!form.contributor) {
+        toast.error('Select a contributor first');
+        return;
+      }
+      const cardsForHolder = filterCardsByHolder(creditCards, form.contributor);
+      if (cardsForHolder.length === 0) {
+        toast.error(`No credit cards for ${form.contributor}. Add one in Admin → Credit Cards.`);
+        return;
+      }
+      if (!cardId) {
+        toast.error('Credit card is required when type is Credit Card');
+        return;
+      }
+    }
+
     const payload = {
-      ...form,
+      date: form.date,
+      contributor: form.contributor,
+      contribution_type: form.contribution_type,
+      value: form.value,
+      description: form.description || null,
+      asset_details: form.contribution_type === 'Credit Card'
+        ? cardAssetDetails(selectedCard, '')
+        : (form.asset_details || null),
+      status: form.status,
+      paid_by: form.paid_by,
       paid_date: form.status === 'Paid' ? (form.paid_date || form.date) : null,
+      ...(form.contribution_type === 'Credit Card' && cardId ? { card_id: cardId } : {}),
     };
     if (editingId) {
       const { error } = await supabase.from('capital_contributions').update(payload).eq('id', editingId);
@@ -153,6 +204,7 @@ export default function CapitalPage() {
       value: Number(c.value),
       description: c.description || '',
       asset_details: c.asset_details || '',
+      credit_card_id: c.card_id ? String(c.card_id) : '',
       status: c.status,
       paid_date: c.paid_date || '',
       paid_by: c.paid_by || 'JM transport',
@@ -197,6 +249,15 @@ export default function CapitalPage() {
   }
 
   const contributorTotals = summary.contributorTotals;
+  const holderCards = filterCardsByHolder(creditCards, form.contributor);
+
+  function cardDisplay(c: CapitalContribution) {
+    if (c.card_id) {
+      const card = creditCards.find((x) => x.id === c.card_id);
+      if (card) return formatCardLabel(card);
+    }
+    return c.asset_details || '-';
+  }
 
   return (
     <div className="space-y-4">
@@ -235,14 +296,14 @@ export default function CapitalPage() {
                 </div>
                 <div>
                   <Label>Contributor</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.contributor} onChange={(e) => setForm({ ...form, contributor: e.target.value })} required>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.contributor} onChange={(e) => setForm({ ...form, contributor: e.target.value, credit_card_id: '' })} required>
                     <option value="">Select</option>
                     {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
                 <div>
                   <Label>Type</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.contribution_type} onChange={(e) => setForm({ ...form, contribution_type: e.target.value })}>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.contribution_type} onChange={(e) => setForm({ ...form, contribution_type: e.target.value, credit_card_id: '', asset_details: '' })}>
                     <option value="Credit Card">Credit Card</option>
                     <option value="Cash">Cash</option>
                     <option value="Bank Transfer">Bank Transfer</option>
@@ -256,10 +317,39 @@ export default function CapitalPage() {
                   <Label>Description</Label>
                   <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
                 </div>
-                <div className="col-span-2">
-                  <Label>Asset/Card Details</Label>
-                  <Input value={form.asset_details} onChange={(e) => setForm({ ...form, asset_details: e.target.value })} placeholder="e.g. HDFC CC" />
-                </div>
+                {form.contribution_type === 'Credit Card' ? (
+                  <div className="col-span-2">
+                    <Label>Credit Card *</Label>
+                    {!form.contributor ? (
+                      <p className="text-sm text-gray-500 py-2">Select a contributor first</p>
+                    ) : cardsTableMissing ? (
+                      <p className="text-sm text-amber-600 py-2">
+                        Run supabase/credit_cards.sql in Supabase, then add cards in Admin → Credit Cards.
+                      </p>
+                    ) : holderCards.length > 0 ? (
+                      <select
+                        className="w-full border rounded-md px-3 py-2 text-sm"
+                        value={form.credit_card_id}
+                        onChange={(e) => setForm({ ...form, credit_card_id: e.target.value, asset_details: '' })}
+                        required
+                      >
+                        <option value="">Select card</option>
+                        {holderCards.map((c) => (
+                          <option key={c.id} value={c.id}>{formatCardOption(c)}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-sm text-amber-600 py-2">
+                        No cards for {form.contributor}. Add one in Admin → Credit Cards.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="col-span-2">
+                    <Label>Asset Details</Label>
+                    <Input value={form.asset_details} onChange={(e) => setForm({ ...form, asset_details: e.target.value })} placeholder="Optional notes" />
+                  </div>
+                )}
               </div>
               <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Contribution</Button>
             </form>
@@ -391,7 +481,7 @@ export default function CapitalPage() {
                       </TableCell>
                       <TableCell className="text-right font-medium text-blue-600 whitespace-nowrap">{formatCurrency(Number(c.value))}</TableCell>
                       <TableCell className="max-w-[150px] truncate">{c.description}</TableCell>
-                      <TableCell className="text-gray-500">{c.asset_details}</TableCell>
+                      <TableCell className="text-gray-500">{cardDisplay(c)}</TableCell>
                       <TableCell>
                         {c.status === 'Paid' ? (
                           <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">

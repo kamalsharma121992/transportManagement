@@ -63,6 +63,19 @@ CREATE TABLE IF NOT EXISTS trips (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Credit cards (partner cards used for expenses)
+CREATE TABLE IF NOT EXISTS credit_cards (
+  id SERIAL PRIMARY KEY,
+  holder TEXT NOT NULL REFERENCES partners(name),
+  bank_name TEXT NOT NULL,
+  network TEXT NOT NULL DEFAULT 'VISA',
+  last_four TEXT NOT NULL DEFAULT '',
+  label TEXT NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (holder, bank_name, network, last_four)
+);
+
 -- Unified Expenses
 CREATE TYPE expense_type AS ENUM ('vehicle', 'operational', 'personal', 'other');
 
@@ -80,6 +93,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   paid_by TEXT DEFAULT 'JM transport' REFERENCES partners(name),
   status TEXT DEFAULT 'Paid',
   payment_source TEXT DEFAULT 'Partner',
+  card_id INTEGER REFERENCES credit_cards(id),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -96,6 +110,7 @@ CREATE TABLE IF NOT EXISTS capital_contributions (
   paid_date DATE,
   paid_by TEXT DEFAULT 'JM transport',
   payment_source TEXT,
+  card_id INTEGER REFERENCES credit_cards(id),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -123,6 +138,9 @@ CREATE INDEX IF NOT EXISTS idx_expenses_type ON expenses(expense_type);
 CREATE INDEX IF NOT EXISTS idx_expenses_vehicle ON expenses(vehicle_number);
 CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(category);
 CREATE INDEX IF NOT EXISTS idx_capital_contributions_date ON capital_contributions(date);
+CREATE INDEX IF NOT EXISTS idx_credit_cards_holder ON credit_cards(holder);
+CREATE INDEX IF NOT EXISTS idx_expenses_card ON expenses(card_id);
+CREATE INDEX IF NOT EXISTS idx_capital_contributions_card ON capital_contributions(card_id);
 
 -- Expense categories (managed in Admin)
 CREATE TABLE IF NOT EXISTS expense_categories (
@@ -146,6 +164,7 @@ ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE capital_contributions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE banking_information ENABLE ROW LEVEL SECURITY;
 ALTER TABLE expense_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE credit_cards ENABLE ROW LEVEL SECURITY;
 
 -- Allow public access (no auth required for now)
 CREATE POLICY "Allow all on partners" ON partners FOR ALL USING (true) WITH CHECK (true);
@@ -157,6 +176,16 @@ CREATE POLICY "Allow all on expenses" ON expenses FOR ALL USING (true) WITH CHEC
 CREATE POLICY "Allow all on capital_contributions" ON capital_contributions FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on banking_information" ON banking_information FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on expense_categories" ON expense_categories FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all on credit_cards" ON credit_cards FOR ALL USING (true) WITH CHECK (true);
+
+INSERT INTO credit_cards (holder, bank_name, network, last_four, label) VALUES
+  ('Subham', 'HDFC', 'VISA', '', 'HDFC VISA - Subham'),
+  ('Subham', 'Indusind', 'VISA', '', 'Indusind VISA - Subham'),
+  ('Subham', 'Kotak', 'VISA', '', 'Kotak VISA - Subham'),
+  ('Bimal', 'Yes Bank', 'VISA', '', 'Yes Bank VISA - Bimal'),
+  ('Kamal', 'HDFC', 'VISA', '', 'HDFC VISA - Kamal'),
+  ('Mohit', 'HDFC', 'Mastercard', '', 'HDFC Mastercard - Mohit')
+ON CONFLICT (holder, bank_name, network, last_four) DO NOTHING;
 
 INSERT INTO expense_categories (name, expense_type, sort_order) VALUES
   ('Fuel (Diesel)', 'vehicle', 1),

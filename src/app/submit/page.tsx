@@ -6,7 +6,17 @@ import {
   buildCategoriesByType,
   DEFAULT_CATEGORIES_BY_TYPE,
   fetchExpenseCategories,
+  FUEL_CATEGORY,
+  paymentModeForCategory,
 } from '@/lib/expense-categories';
+import {
+  cardAssetDetails,
+  fetchCreditCards,
+  filterCardsByHolder,
+  formatCardLabel,
+  formatCardOption,
+  type CreditCard,
+} from '@/lib/credit-cards';
 import { formatCurrency } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,6 +37,7 @@ const emptyForm = {
   paid_by: 'JM transport',
   payment_source: 'Partner',
   payment_mode: 'Cash',
+  credit_card_id: '',
   card_details: '',
 };
 
@@ -39,6 +50,15 @@ export default function SubmitExpensePage() {
   const [submittedId, setSubmittedId] = useState<number | null>(null);
   const [submittedForm, setSubmittedForm] = useState(emptyForm);
   const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);
+  const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
+  const [cardsTableMissing, setCardsTableMissing] = useState(false);
+
+  useEffect(() => {
+    fetchCreditCards().then(({ data, tableMissing }) => {
+      setCreditCards(data);
+      setCardsTableMissing(tableMissing);
+    });
+  }, []);
 
   useEffect(() => {
     fetchExpenseCategories().then(({ data }) => {
@@ -57,18 +77,50 @@ export default function SubmitExpensePage() {
 
   function handleTypeChange(type: ExpenseType) {
     const categories = categoriesByType[type];
+    setForm((f) => {
+      const category = categories.includes(f.category) ? f.category : '';
+      return {
+        ...f,
+        expense_type: type,
+        category,
+        vehicle_number: type === 'vehicle' ? f.vehicle_number : '',
+        person: type === 'vehicle' ? '' : f.person,
+        payment_mode: category ? paymentModeForCategory(category) : f.payment_mode,
+        credit_card_id: category === FUEL_CATEGORY ? f.credit_card_id : '',
+        card_details: category === FUEL_CATEGORY ? f.card_details : '',
+      };
+    });
+  }
+
+  function handleCategoryChange(category: string) {
     setForm((f) => ({
       ...f,
-      expense_type: type,
-      category: categories.includes(f.category) ? f.category : '',
-      vehicle_number: type === 'vehicle' ? f.vehicle_number : '',
-      person: type === 'vehicle' ? '' : f.person,
+      category,
+      payment_mode: paymentModeForCategory(category),
+      credit_card_id: category === FUEL_CATEGORY ? f.credit_card_id : '',
+      card_details: category === FUEL_CATEGORY ? f.card_details : '',
     }));
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
+
+    const cardId = form.credit_card_id ? Number(form.credit_card_id) : null;
+    const selectedCard = creditCards.find((c) => c.id === cardId);
+
+    if (
+      form.payment_source === 'Partner'
+      && form.payment_mode === 'Credit Card'
+      && !cardId
+      && !form.card_details.trim()
+      && !cardsTableMissing
+      && filterCardsByHolder(creditCards, form.paid_by_person).length > 0
+    ) {
+      setSubmitting(false);
+      toast.error('Please select a credit card');
+      return;
+    }
 
     const payload = {
       date: form.date,
@@ -82,6 +134,7 @@ export default function SubmitExpensePage() {
       paid_by: form.paid_by,
       payment_source: form.payment_source,
       status: 'Paid',
+      ...(cardId && !cardsTableMissing ? { card_id: cardId } : {}),
     };
 
     const { data: inserted, error } = await supabase.from('expenses').insert(payload).select('id').single();
@@ -100,7 +153,8 @@ export default function SubmitExpensePage() {
         contribution_type: form.payment_mode,
         value: Number(form.amount),
         description: form.description || form.category,
-        asset_details: form.payment_mode === 'Credit Card' ? form.card_details : null,
+        asset_details: cardAssetDetails(selectedCard, form.card_details),
+        ...(cardId && !cardsTableMissing ? { card_id: cardId } : {}),
         status: 'Unpaid',
         paid_by: 'JM transport',
       });
@@ -136,6 +190,7 @@ export default function SubmitExpensePage() {
       paid_by: form.paid_by,
       payment_source: form.payment_source,
       status: 'Paid',
+      ...(form.credit_card_id && !cardsTableMissing ? { card_id: Number(form.credit_card_id) } : {}),
     };
 
     const { error } = await supabase.from('expenses').update(payload).eq('id', submittedId);
@@ -158,6 +213,7 @@ export default function SubmitExpensePage() {
   }
 
   const availableCategories = categoriesByType[form.expense_type] || [];
+  const holderCards = filterCardsByHolder(creditCards, form.paid_by_person);
 
   const typeColors: Record<string, string> = {
     vehicle: 'bg-blue-600 text-white',
@@ -230,7 +286,14 @@ export default function SubmitExpensePage() {
                 {sf.payment_source === 'Partner' && sf.payment_mode && (
                   <div className="flex justify-between">
                     <span className="text-gray-500">Payment Mode</span>
-                    <span>{sf.payment_mode}{sf.card_details ? ` (${sf.card_details})` : ''}</span>
+                    <span>
+                      {sf.payment_mode}
+                      {sf.payment_mode === 'Credit Card' && (() => {
+                        const card = creditCards.find((c) => c.id === Number(sf.credit_card_id));
+                        const label = card ? formatCardLabel(card) : sf.card_details;
+                        return label ? ` (${label})` : '';
+                      })()}
+                    </span>
                   </div>
                 )}
                 {sf.payment_source === 'Partner' && sf.paid_by_person && (
@@ -317,7 +380,7 @@ export default function SubmitExpensePage() {
                 </div>
                 <div>
                   <Label>Category</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} required>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.category} onChange={(e) => handleCategoryChange(e.target.value)} required>
                     <option value="">Select</option>
                     {availableCategories.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
@@ -350,7 +413,7 @@ export default function SubmitExpensePage() {
                 </div>
                 <div>
                   <Label>Paid By (Person)</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.paid_by_person} onChange={(e) => setForm({ ...form, paid_by_person: e.target.value })}>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.paid_by_person} onChange={(e) => setForm({ ...form, paid_by_person: e.target.value, credit_card_id: '' })}>
                     <option value="">Select</option>
                     {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
@@ -376,10 +439,10 @@ export default function SubmitExpensePage() {
               </div>
 
               {form.payment_source === 'Partner' && (
-                <div className="grid grid-cols-2 gap-3">
+                <>
                   <div>
                     <Label>Payment Mode</Label>
-                    <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.payment_mode} onChange={(e) => setForm({ ...form, payment_mode: e.target.value })}>
+                    <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.payment_mode} onChange={(e) => setForm({ ...form, payment_mode: e.target.value, credit_card_id: '', card_details: '' })}>
                       <option value="Cash">Cash</option>
                       <option value="Credit Card">Credit Card</option>
                       <option value="Bank Transfer">Bank Transfer</option>
@@ -387,11 +450,33 @@ export default function SubmitExpensePage() {
                   </div>
                   {form.payment_mode === 'Credit Card' && (
                     <div>
-                      <Label>Card Details</Label>
-                      <Input value={form.card_details} onChange={(e) => setForm({ ...form, card_details: e.target.value })} placeholder="e.g. HDFC CC" />
+                      <Label>Credit Card</Label>
+                      {holderCards.length > 0 ? (
+                        <select
+                          className="w-full border rounded-md px-3 py-2 text-sm"
+                          value={form.credit_card_id}
+                          onChange={(e) => setForm({ ...form, credit_card_id: e.target.value, card_details: '' })}
+                        >
+                          <option value="">Select card</option>
+                          {holderCards.map((c) => (
+                            <option key={c.id} value={c.id}>{formatCardOption(c)}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <>
+                          <Input
+                            value={form.card_details}
+                            onChange={(e) => setForm({ ...form, card_details: e.target.value })}
+                            placeholder="e.g. HDFC VISA (add cards in Admin)"
+                          />
+                          {!cardsTableMissing && form.paid_by_person && (
+                            <p className="text-xs text-amber-600 mt-1">No cards for {form.paid_by_person}. Add one in Admin → Credit Cards.</p>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
-                </div>
+                </>
               )}
 
               <Button type="submit" className="w-full h-12 text-base" disabled={submitting}>

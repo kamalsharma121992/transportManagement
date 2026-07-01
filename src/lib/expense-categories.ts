@@ -1,5 +1,11 @@
 export type ExpenseType = 'vehicle' | 'operational' | 'personal' | 'other';
 
+export const FUEL_CATEGORY = 'Fuel (Diesel)';
+
+export function paymentModeForCategory(category: string): 'Cash' | 'Credit Card' {
+  return category === FUEL_CATEGORY ? 'Credit Card' : 'Cash';
+}
+
 export type ExpenseCategory = {
   id: number;
   name: string;

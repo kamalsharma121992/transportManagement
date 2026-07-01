@@ -97,6 +97,17 @@ export type Expense = {
   paid_by: string;
   status: string;
   payment_source: string | null;
+  card_id: number | null;
+};
+
+export type CreditCard = {
+  id: number;
+  holder: string;
+  bank_name: string;
+  network: string;
+  last_four: string;
+  label: string;
+  is_active: boolean;
 };
 
 export type CapitalContribution = {
@@ -111,6 +122,7 @@ export type CapitalContribution = {
   paid_date: string | null;
   paid_by: string;
   payment_source: string | null;
+  card_id: number | null;
 };
 
 export const EXPENSE_TYPES: { value: ExpenseType; label: string }[] = [
