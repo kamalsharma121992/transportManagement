@@ -60,6 +60,7 @@ const categoryColor: Record<string, string> = {
   'Rent': 'bg-orange-100 text-orange-800',
   'Daily Allowance': 'bg-teal-100 text-teal-800',
   'Advance': 'bg-red-100 text-red-800',
+  'Credit Card Payment': 'bg-indigo-100 text-indigo-800',
 };
 
 export default function ExpensesPage() {
