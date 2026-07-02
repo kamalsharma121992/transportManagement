@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { supabase, Trip } from '@/lib/supabase';
-import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
+import { formatCurrency, formatDate, getMonthFilterOptions, getMonthDateRange, FILTER_SELECT_CLASS } from '@/lib/format';
 import {
   parseTripPdf,
   recalcTripRow,
@@ -135,10 +135,8 @@ export default function TripsPage() {
     if (filterRoute) q = q.eq('route_name', filterRoute);
     if (filterDriver) q = q.eq('driver_name', filterDriver);
     if (filterMonth) {
-      const [y, m] = filterMonth.split('-');
-      const start = `${y}-${m}-01`;
-      const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
-      q = q.gte('date', start).lte('date', end);
+      const { from, to } = getMonthDateRange(filterMonth);
+      q = q.gte('date', from).lte('date', to);
     } else {
       if (filterDateFrom) q = q.gte('date', filterDateFrom);
       if (filterDateTo) q = q.lte('date', filterDateTo);

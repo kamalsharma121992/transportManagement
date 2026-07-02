@@ -18,7 +18,7 @@ import {
   formatCardOption,
   type CreditCard,
 } from '@/lib/credit-cards';
-import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
+import { formatCurrency, formatDate, getMonthFilterOptions, getMonthDateRange, FILTER_SELECT_CLASS } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,6 +35,7 @@ import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { ActiveFiltersBar } from '@/components/active-filters-bar';
+import { MultiSelectFilter } from '@/components/multi-select-filter';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
@@ -102,7 +103,7 @@ export default function ExpensesPage() {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [filterType, setFilterType] = useState<ExpenseType | ''>('');
   const [filterVehicle, setFilterVehicle] = useState('');
-  const [filterCategory, setFilterCategory] = useState('');
+  const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterPerson, setFilterPerson] = useState('');
   const [filterPaidByPerson, setFilterPaidByPerson] = useState('');
   const [filterPaidBy, setFilterPaidBy] = useState('');
@@ -124,7 +125,7 @@ export default function ExpensesPage() {
     setTotalItems: setTotalExpenses,
     totalPages,
   } = useServerPagination([
-    filterType, filterVehicle, filterCategory, filterPerson,
+    filterType, filterVehicle, filterCategories, filterPerson,
     filterPaidByPerson, filterPaidBy, filterPaymentSource, filterDateFrom, filterDateTo, filterMonth, searchQuery,
     sortColumn, sortDirection,
   ]);
@@ -132,22 +133,21 @@ export default function ExpensesPage() {
   function applyExpenseFilters<Q>(query: Q): Q {
     let q = query as {
       eq: (col: string, val: string) => typeof q;
+      in: (col: string, vals: string[]) => typeof q;
       gte: (col: string, val: string) => typeof q;
       lte: (col: string, val: string) => typeof q;
       or: (filter: string) => typeof q;
     };
     if (filterType) q = q.eq('expense_type', filterType);
     if (filterVehicle) q = q.eq('vehicle_number', filterVehicle);
-    if (filterCategory) q = q.eq('category', filterCategory);
+    if (filterCategories.length > 0) q = q.in('category', filterCategories);
     if (filterPerson) q = q.eq('person', filterPerson);
     if (filterPaidByPerson) q = q.eq('paid_by_person', filterPaidByPerson);
     if (filterPaidBy) q = q.eq('paid_by', filterPaidBy);
     if (filterPaymentSource) q = q.eq('payment_source', filterPaymentSource);
     if (filterMonth) {
-      const [y, m] = filterMonth.split('-');
-      const start = `${y}-${m}-01`;
-      const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
-      q = q.gte('date', start).lte('date', end);
+      const { from, to } = getMonthDateRange(filterMonth);
+      q = q.gte('date', from).lte('date', to);
     } else {
       if (filterDateFrom) q = q.gte('date', filterDateFrom);
       if (filterDateTo) q = q.lte('date', filterDateTo);
@@ -186,10 +186,10 @@ export default function ExpensesPage() {
     setLoading(false);
   }
 
-  const hasActiveFilters = filterMonth !== currentMonth || !!filterType || !!filterVehicle || !!filterCategory || !!filterPerson || !!filterPaidByPerson || !!filterPaidBy || !!filterPaymentSource || !!filterDateFrom || !!filterDateTo || !!searchQuery;
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterType || !!filterVehicle || filterCategories.length > 0 || !!filterPerson || !!filterPaidByPerson || !!filterPaidBy || !!filterPaymentSource || !!filterDateFrom || !!filterDateTo || !!searchQuery;
 
   function clearFilters() {
-    setFilterType(''); setFilterVehicle(''); setFilterCategory('');
+    setFilterType(''); setFilterVehicle(''); setFilterCategories([]);
     setFilterPerson(''); setFilterPaidByPerson(''); setFilterPaidBy('');
     setFilterPaymentSource('');
     setFilterDateFrom(''); setFilterDateTo(''); setFilterMonth(currentMonth);
@@ -214,13 +214,14 @@ export default function ExpensesPage() {
   if (filterPaidByPerson) activeFilterLabels.push('Paid by: ' + filterPaidByPerson);
   if (filterPerson) activeFilterLabels.push('Given to: ' + filterPerson);
   if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
-  if (filterCategory) activeFilterLabels.push('Category: ' + filterCategory);
+  if (filterCategories.length === 1) activeFilterLabels.push('Category: ' + filterCategories[0]);
+  else if (filterCategories.length > 1) activeFilterLabels.push('Categories: ' + filterCategories.join(', '));
   if (filterPaymentSource) activeFilterLabels.push('Paid from: ' + filterPaymentSource);
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   useEffect(() => {
     fetchExpenses();
-  }, [page, pageSize, filterType, filterVehicle, filterCategory, filterPerson, filterPaidByPerson, filterPaidBy, filterPaymentSource, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
+  }, [page, pageSize, filterType, filterVehicle, filterCategories, filterPerson, filterPaidByPerson, filterPaidBy, filterPaymentSource, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (searchParams.get('add') === '1') {
@@ -379,6 +380,7 @@ export default function ExpensesPage() {
   }
 
   const availableCategories = form.expense_type ? categoriesByType[form.expense_type] : [];
+  const categoryFilterOptions = filterType ? categoriesByType[filterType] : allCategories;
   const holderCards = filterCardsByHolder(creditCards, form.paid_by_person);
 
   return (
@@ -556,7 +558,12 @@ export default function ExpensesPage() {
           All
         </button>
         {EXPENSE_TYPES.map((t) => (
-          <button key={t.value} onClick={() => setFilterType(t.value)}
+          <button key={t.value} onClick={() => {
+            setFilterType(t.value);
+            setFilterCategories((prev) =>
+              prev.filter((c) => categoriesByType[t.value].includes(c)),
+            );
+          }}
             className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === t.value ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
             {t.label}
           </button>
@@ -625,13 +632,13 @@ export default function ExpensesPage() {
                     {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
                   </select>
                 </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Category</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
-                    <option value="">All</option>
-                    {allCategories.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
+                <MultiSelectFilter
+                  label="Category"
+                  options={categoryFilterOptions}
+                  selected={filterCategories}
+                  onChange={setFilterCategories}
+                  placeholder="All categories"
+                />
                 <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Paid From</label>
                   <select className={FILTER_SELECT_CLASS} value={filterPaymentSource} onChange={(e) => setFilterPaymentSource(e.target.value)}>

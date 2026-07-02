@@ -32,5 +32,16 @@ export function getMonthFilterOptions(): { value: string; label: string }[] {
   return options;
 }
 
+/** Local calendar month bounds (YYYY-MM-DD). Avoids UTC shift from toISOString(). */
+export function getMonthDateRange(month: string): { from: string; to: string } {
+  const [y, m] = month.split('-');
+  const year = Number(y);
+  const monthNum = Number(m);
+  const from = `${y}-${m}-01`;
+  const lastDay = new Date(year, monthNum, 0).getDate();
+  const to = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+  return { from, to };
+}
+
 export const FILTER_SELECT_CLASS =
   'w-full min-w-0 border rounded-md px-3 py-2 text-sm bg-white';

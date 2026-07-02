@@ -1,4 +1,5 @@
 import { supabase, type Driver, DRIVER_PAY_CATEGORIES, SALARY_CATEGORIES } from '@/lib/supabase';
+import { getMonthDateRange } from '@/lib/format';
 
 export type DriverLeaveEntry = {
   date: string;
@@ -72,11 +73,7 @@ export function computePayrollTotals(
 }
 
 export function getMonthBounds(month: string): { from: string; to: string } {
-  const [y, m] = month.split('-');
-  const from = `${y}-${m}-01`;
-  const end = new Date(Number(y), Number(m), 0);
-  const to = end.toISOString().split('T')[0];
-  return { from, to };
+  return getMonthDateRange(month);
 }
 
 export function getTodayDateString(): string {
@@ -119,7 +116,9 @@ export function getEmploymentDaysInMonth(
   const cursor = new Date(start + 'T12:00:00');
   const endDate = new Date(end + 'T12:00:00');
   while (cursor <= endDate) {
-    days.push(cursor.toISOString().split('T')[0]);
+    days.push(
+      `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`,
+    );
     cursor.setDate(cursor.getDate() + 1);
   }
   return days;

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { getMonthDateRange } from '@/lib/format';
 import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS, TRIP_SEARCH_COLUMNS } from '@/lib/search';
 
 export type DashboardStats = {
@@ -35,10 +36,8 @@ export function getDashboardDateRange(
   filterDateTo: string,
 ): { dateFrom: string | null; dateTo: string | null } {
   if (filterMonth) {
-    const [y, m] = filterMonth.split('-');
-    const start = `${y}-${m}-01`;
-    const end = new Date(Number(y), Number(m), 0).toISOString().split('T')[0];
-    return { dateFrom: start, dateTo: end };
+    const { from, to } = getMonthDateRange(filterMonth);
+    return { dateFrom: from, dateTo: to };
   }
   return {
     dateFrom: filterDateFrom || null,
