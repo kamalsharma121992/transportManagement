@@ -380,7 +380,6 @@ export default function ExpensesPage() {
   }
 
   const availableCategories = form.expense_type ? categoriesByType[form.expense_type] : [];
-  const categoryFilterOptions = filterType ? categoriesByType[filterType] : allCategories;
   const holderCards = filterCardsByHolder(creditCards, form.paid_by_person);
 
   return (
@@ -634,7 +633,7 @@ export default function ExpensesPage() {
                 </div>
                 <MultiSelectFilter
                   label="Category"
-                  options={categoryFilterOptions}
+                  options={allCategories}
                   selected={filterCategories}
                   onChange={setFilterCategories}
                   placeholder="All categories"
