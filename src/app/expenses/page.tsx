@@ -638,6 +638,8 @@ export default function ExpensesPage() {
                   selected={filterCategories}
                   onChange={setFilterCategories}
                   placeholder="All categories"
+                  searchable
+                  searchPlaceholder="Search categories..."
                 />
                 <div className="min-w-0">
                   <label className="text-xs text-gray-500 mb-1 block">Paid From</label>
