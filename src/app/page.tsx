@@ -13,6 +13,8 @@ import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/page-header';
 import { ActiveFiltersBar } from '@/components/active-filters-bar';
+import { MultiSelectFilter } from '@/components/multi-select-filter';
+import { formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { Input } from '@/components/ui/input';
 import { ChevronDown, ChevronUp } from 'lucide-react';
@@ -66,25 +68,27 @@ export default function Dashboard() {
   const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterPaidBy, setFilterPaidBy] = useState('');
-  const [filterPaidByPerson, setFilterPaidByPerson] = useState('');
-  const [filterPerson, setFilterPerson] = useState('');
-  const [filterVehicle, setFilterVehicle] = useState('');
-  const [filterPaymentSource, setFilterPaymentSource] = useState('');
+  const [filterPaidByEntities, setFilterPaidByEntities] = useState<string[]>([]);
+  const [filterPaidByPersons, setFilterPaidByPersons] = useState<string[]>([]);
+  const [filterPersons, setFilterPersons] = useState<string[]>([]);
+  const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
+  const [filterPaymentSources, setFilterPaymentSources] = useState<string[]>([]);
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput);
 
-  const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || !!filterPaidBy || !!filterPaidByPerson || !!filterPerson || !!filterVehicle || !!filterPaymentSource || !!searchQuery;
+  const DASHBOARD_PAYMENT_SOURCES = ['Revenue', 'Kamal', 'Bimal', 'Subham', 'Mohit', 'Partner'];
+
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || filterPaidByEntities.length > 0 || filterPaidByPersons.length > 0 || filterPersons.length > 0 || filterVehicles.length > 0 || filterPaymentSources.length > 0 || !!searchQuery;
 
   function clearFilters() {
     setFilterMonth(currentMonth);
     setFilterDateFrom('');
     setFilterDateTo('');
-    setFilterPaidBy('');
-    setFilterPaidByPerson('');
-    setFilterPerson('');
-    setFilterVehicle('');
-    setFilterPaymentSource('');
+    setFilterPaidByEntities([]);
+    setFilterPaidByPersons([]);
+    setFilterPersons([]);
+    setFilterVehicles([]);
+    setFilterPaymentSources([]);
     setSearchInput('');
   }
 
@@ -97,11 +101,26 @@ export default function Dashboard() {
   }
   if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
   if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
-  if (filterPaidBy) activeFilterLabels.push('Entity: ' + filterPaidBy);
-  if (filterPaidByPerson) activeFilterLabels.push('Paid by: ' + filterPaidByPerson);
-  if (filterPerson) activeFilterLabels.push('Given to: ' + filterPerson);
-  if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
-  if (filterPaymentSource) activeFilterLabels.push('Source: ' + filterPaymentSource);
+  if (filterPaidByEntities.length > 0) {
+    const label = formatMultiFilterLabel('Entity', filterPaidByEntities);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterPaidByPersons.length > 0) {
+    const label = formatMultiFilterLabel('Paid by', filterPaidByPersons);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterPersons.length > 0) {
+    const label = formatMultiFilterLabel('Given to', filterPersons);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterVehicles.length > 0) {
+    const label = formatMultiFilterLabel('Vehicle', filterVehicles);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterPaymentSources.length > 0) {
+    const label = formatMultiFilterLabel('Source', filterPaymentSources);
+    if (label) activeFilterLabels.push(label);
+  }
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   useEffect(() => {
@@ -125,13 +144,13 @@ export default function Dashboard() {
       const { data, error } = await fetchDashboardStats({
         dateFrom,
         dateTo,
-        tripVehicle: filterVehicle || null,
+        tripVehicles: filterVehicles,
         tripSearch: searchQuery || null,
-        expPaidBy: filterPaidBy || null,
-        expPaidByPerson: filterPaidByPerson || null,
-        expPerson: filterPerson || null,
-        expVehicle: filterVehicle || null,
-        expPaymentSource: filterPaymentSource || null,
+        expPaidBy: filterPaidByEntities,
+        expPaidByPerson: filterPaidByPersons,
+        expPerson: filterPersons,
+        expVehicles: filterVehicles,
+        expPaymentSources: filterPaymentSources,
         expSearch: searchQuery || null,
       });
 
@@ -144,7 +163,7 @@ export default function Dashboard() {
     }
 
     loadStats();
-  }, [filterMonth, filterDateFrom, filterDateTo, filterPaidBy, filterPaidByPerson, filterPerson, filterVehicle, filterPaymentSource, searchQuery]);
+  }, [filterMonth, filterDateFrom, filterDateTo, filterPaidByEntities, filterPaidByPersons, filterPersons, filterVehicles, filterPaymentSources, searchQuery]);
 
   const netProfit = stats.totalRevenue - stats.totalExpenses;
   const dailyRevenue = useMemo(
@@ -204,47 +223,46 @@ export default function Dashboard() {
                   <label className="text-xs text-gray-500 mb-1 block">Date To</label>
                   <Input className="min-w-0" type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setFilterMonth(''); }} />
                 </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Entity</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterPaidBy} onChange={(e) => setFilterPaidBy(e.target.value)}>
-                    <option value="">All</option>
-                    <option value="JM transport">JM Transport</option>
-                    <option value="Mahesh">Mahesh</option>
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Who Paid</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterPaidByPerson} onChange={(e) => setFilterPaidByPerson(e.target.value)}>
-                    <option value="">All</option>
-                    {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Given To</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)}>
-                    <option value="">All</option>
-                    {partners.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Vehicle</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterVehicle} onChange={(e) => setFilterVehicle(e.target.value)}>
-                    <option value="">All</option>
-                    {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Paid From</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterPaymentSource} onChange={(e) => setFilterPaymentSource(e.target.value)}>
-                    <option value="">All</option>
-                    <option value="Revenue">Revenue</option>
-                    <option value="Kamal">Kamal</option>
-                    <option value="Bimal">Bimal</option>
-                    <option value="Subham">Subham</option>
-                    <option value="Mohit">Mohit</option>
-                    <option value="Partner">Partner (unset)</option>
-                  </select>
-                </div>
+                <MultiSelectFilter
+                  label="Entity"
+                  options={['JM transport', 'Mahesh']}
+                  selected={filterPaidByEntities}
+                  onChange={setFilterPaidByEntities}
+                  placeholder="All"
+                  searchPlaceholder="Search entity..."
+                />
+                <MultiSelectFilter
+                  label="Who Paid"
+                  options={JM_PARTNERS}
+                  selected={filterPaidByPersons}
+                  onChange={setFilterPaidByPersons}
+                  placeholder="All"
+                  searchPlaceholder="Search person..."
+                />
+                <MultiSelectFilter
+                  label="Given To"
+                  options={partners}
+                  selected={filterPersons}
+                  onChange={setFilterPersons}
+                  placeholder="All"
+                  searchPlaceholder="Search partner..."
+                />
+                <MultiSelectFilter
+                  label="Vehicle"
+                  options={vehicles}
+                  selected={filterVehicles}
+                  onChange={setFilterVehicles}
+                  placeholder="All"
+                  searchPlaceholder="Search vehicle..."
+                />
+                <MultiSelectFilter
+                  label="Paid From"
+                  options={DASHBOARD_PAYMENT_SOURCES}
+                  selected={filterPaymentSources}
+                  onChange={setFilterPaymentSources}
+                  placeholder="All"
+                  searchPlaceholder="Search source..."
+                />
               </div>
             </CardContent>
           </Card>

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { getMonthDateRange } from '@/lib/format';
+import { applyInFilter, hasMultiValueFilters } from '@/lib/filter-helpers';
 import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS, TRIP_SEARCH_COLUMNS } from '@/lib/search';
 
 export type DashboardStats = {
@@ -20,13 +21,13 @@ export type DashboardStats = {
 export type DashboardFilterParams = {
   dateFrom: string | null;
   dateTo: string | null;
-  tripVehicle: string | null;
+  tripVehicles: string[];
   tripSearch: string | null;
-  expPaidBy: string | null;
-  expPaidByPerson: string | null;
-  expPerson: string | null;
-  expVehicle: string | null;
-  expPaymentSource: string | null;
+  expPaidBy: string[];
+  expPaidByPerson: string[];
+  expPerson: string[];
+  expVehicles: string[];
+  expPaymentSources: string[];
   expSearch: string | null;
 };
 
@@ -126,13 +127,14 @@ function buildTripFilterQuery(filters: DashboardFilterParams) {
     gte: (col: string, val: string) => Q;
     lte: (col: string, val: string) => Q;
     eq: (col: string, val: string) => Q;
+    in: (col: string, vals: string[]) => Q;
     or: (filter: string) => Q;
     select: (cols: string, opts?: { count?: 'exact'; head?: boolean }) => Promise<{ count: number | null; data: unknown; error: { message: string } | null }>;
   };
   let q = supabase.from('trips') as unknown as Q;
   if (filters.dateFrom) q = q.gte('date', filters.dateFrom);
   if (filters.dateTo) q = q.lte('date', filters.dateTo);
-  if (filters.tripVehicle) q = q.eq('vehicle_number', filters.tripVehicle);
+  q = applyInFilter(q, 'vehicle_number', filters.tripVehicles);
   const searchFilter = buildTextSearchFilter([...TRIP_SEARCH_COLUMNS], filters.tripSearch || '');
   if (searchFilter) q = q.or(searchFilter);
   return q;
@@ -143,17 +145,18 @@ function buildExpenseFilterQuery(filters: DashboardFilterParams) {
     gte: (col: string, val: string) => Q;
     lte: (col: string, val: string) => Q;
     eq: (col: string, val: string) => Q;
+    in: (col: string, vals: string[]) => Q;
     or: (filter: string) => Q;
     select: (cols: string, opts?: { count?: 'exact'; head?: boolean }) => Promise<{ count: number | null; data: unknown; error: { message: string } | null }>;
   };
   let q = supabase.from('expenses') as unknown as Q;
   if (filters.dateFrom) q = q.gte('date', filters.dateFrom);
   if (filters.dateTo) q = q.lte('date', filters.dateTo);
-  if (filters.expPaidBy) q = q.eq('paid_by', filters.expPaidBy);
-  if (filters.expPaidByPerson) q = q.eq('paid_by_person', filters.expPaidByPerson);
-  if (filters.expPerson) q = q.eq('person', filters.expPerson);
-  if (filters.expVehicle) q = q.eq('vehicle_number', filters.expVehicle);
-  if (filters.expPaymentSource) q = q.eq('payment_source', filters.expPaymentSource);
+  q = applyInFilter(q, 'paid_by', filters.expPaidBy);
+  q = applyInFilter(q, 'paid_by_person', filters.expPaidByPerson);
+  q = applyInFilter(q, 'person', filters.expPerson);
+  q = applyInFilter(q, 'vehicle_number', filters.expVehicles);
+  q = applyInFilter(q, 'payment_source', filters.expPaymentSources);
   const searchFilter = buildTextSearchFilter([...EXPENSE_SEARCH_COLUMNS], filters.expSearch || '');
   if (searchFilter) q = q.or(searchFilter);
   return q;
@@ -256,25 +259,36 @@ async function fetchDashboardStatsFallback(
 export async function fetchDashboardStats(
   filters: DashboardFilterParams,
 ): Promise<{ data: DashboardStats | null; error: string | null }> {
-  const { data, error } = await supabase.rpc('dashboard_stats', {
-    p_date_from: filters.dateFrom,
-    p_date_to: filters.dateTo,
-    p_trip_vehicle: filters.tripVehicle || null,
-    p_trip_search: filters.tripSearch?.trim() || null,
-    p_exp_paid_by: filters.expPaidBy || null,
-    p_exp_paid_by_person: filters.expPaidByPerson || null,
-    p_exp_person: filters.expPerson || null,
-    p_exp_vehicle: filters.expVehicle || null,
-    p_exp_payment_source: filters.expPaymentSource || null,
-    p_exp_search: filters.expSearch?.trim() || null,
-  });
+  const useFallback = hasMultiValueFilters(
+    filters.tripVehicles,
+    filters.expPaidBy,
+    filters.expPaidByPerson,
+    filters.expPerson,
+    filters.expVehicles,
+    filters.expPaymentSources,
+  );
 
-  if (error) {
-    if (error.message.includes('dashboard_stats') || error.message.includes('schema cache')) {
-      return fetchDashboardStatsFallback(filters);
+  if (!useFallback) {
+    const { data, error } = await supabase.rpc('dashboard_stats', {
+      p_date_from: filters.dateFrom,
+      p_date_to: filters.dateTo,
+      p_trip_vehicle: filters.tripVehicles[0] || null,
+      p_trip_search: filters.tripSearch?.trim() || null,
+      p_exp_paid_by: filters.expPaidBy[0] || null,
+      p_exp_paid_by_person: filters.expPaidByPerson[0] || null,
+      p_exp_person: filters.expPerson[0] || null,
+      p_exp_vehicle: filters.expVehicles[0] || null,
+      p_exp_payment_source: filters.expPaymentSources[0] || null,
+      p_exp_search: filters.expSearch?.trim() || null,
+    });
+
+    if (!error && data) {
+      return { data: parseStats(data as Record<string, unknown>), error: null };
     }
-    return { data: null, error: error.message };
+    if (error && !error.message.includes('dashboard_stats') && !error.message.includes('schema cache')) {
+      return { data: null, error: error.message };
+    }
   }
-  if (!data || typeof data !== 'object') return { data: emptyStats(), error: null };
-  return { data: parseStats(data as Record<string, unknown>), error: null };
+
+  return fetchDashboardStatsFallback(filters);
 }

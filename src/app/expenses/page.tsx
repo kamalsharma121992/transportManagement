@@ -36,6 +36,7 @@ import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { ActiveFiltersBar } from '@/components/active-filters-bar';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
+import { applyInFilter, formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
@@ -102,12 +103,12 @@ export default function ExpensesPage() {
   // Filters — default to current month
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [filterType, setFilterType] = useState<ExpenseType | ''>('');
-  const [filterVehicle, setFilterVehicle] = useState('');
+  const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
-  const [filterPerson, setFilterPerson] = useState('');
-  const [filterPaidByPerson, setFilterPaidByPerson] = useState('');
-  const [filterPaidBy, setFilterPaidBy] = useState('');
-  const [filterPaymentSource, setFilterPaymentSource] = useState('');
+  const [filterPersons, setFilterPersons] = useState<string[]>([]);
+  const [filterPaidByPersons, setFilterPaidByPersons] = useState<string[]>([]);
+  const [filterPaidByEntities, setFilterPaidByEntities] = useState<string[]>([]);
+  const [filterPaymentSources, setFilterPaymentSources] = useState<string[]>([]);
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterMonth, setFilterMonth] = useState(currentMonth);
@@ -125,8 +126,8 @@ export default function ExpensesPage() {
     setTotalItems: setTotalExpenses,
     totalPages,
   } = useServerPagination([
-    filterType, filterVehicle, filterCategories, filterPerson,
-    filterPaidByPerson, filterPaidBy, filterPaymentSource, filterDateFrom, filterDateTo, filterMonth, searchQuery,
+    filterType, filterVehicles, filterCategories, filterPersons,
+    filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterDateFrom, filterDateTo, filterMonth, searchQuery,
     sortColumn, sortDirection,
   ]);
 
@@ -139,12 +140,12 @@ export default function ExpensesPage() {
       or: (filter: string) => typeof q;
     };
     if (filterType) q = q.eq('expense_type', filterType);
-    if (filterVehicle) q = q.eq('vehicle_number', filterVehicle);
-    if (filterCategories.length > 0) q = q.in('category', filterCategories);
-    if (filterPerson) q = q.eq('person', filterPerson);
-    if (filterPaidByPerson) q = q.eq('paid_by_person', filterPaidByPerson);
-    if (filterPaidBy) q = q.eq('paid_by', filterPaidBy);
-    if (filterPaymentSource) q = q.eq('payment_source', filterPaymentSource);
+    q = applyInFilter(q, 'vehicle_number', filterVehicles);
+    q = applyInFilter(q, 'category', filterCategories);
+    q = applyInFilter(q, 'person', filterPersons);
+    q = applyInFilter(q, 'paid_by_person', filterPaidByPersons);
+    q = applyInFilter(q, 'paid_by', filterPaidByEntities);
+    q = applyInFilter(q, 'payment_source', filterPaymentSources);
     if (filterMonth) {
       const { from, to } = getMonthDateRange(filterMonth);
       q = q.gte('date', from).lte('date', to);
@@ -186,12 +187,12 @@ export default function ExpensesPage() {
     setLoading(false);
   }
 
-  const hasActiveFilters = filterMonth !== currentMonth || !!filterType || !!filterVehicle || filterCategories.length > 0 || !!filterPerson || !!filterPaidByPerson || !!filterPaidBy || !!filterPaymentSource || !!filterDateFrom || !!filterDateTo || !!searchQuery;
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterType || filterVehicles.length > 0 || filterCategories.length > 0 || filterPersons.length > 0 || filterPaidByPersons.length > 0 || filterPaidByEntities.length > 0 || filterPaymentSources.length > 0 || !!filterDateFrom || !!filterDateTo || !!searchQuery;
 
   function clearFilters() {
-    setFilterType(''); setFilterVehicle(''); setFilterCategories([]);
-    setFilterPerson(''); setFilterPaidByPerson(''); setFilterPaidBy('');
-    setFilterPaymentSource('');
+    setFilterType(''); setFilterVehicles([]); setFilterCategories([]);
+    setFilterPersons([]); setFilterPaidByPersons([]); setFilterPaidByEntities([]);
+    setFilterPaymentSources([]);
     setFilterDateFrom(''); setFilterDateTo(''); setFilterMonth(currentMonth);
     setSearchInput('');
   }
@@ -210,18 +211,35 @@ export default function ExpensesPage() {
     const typeLabel = EXPENSE_TYPES.find((t) => t.value === filterType)?.label ?? filterType;
     activeFilterLabels.push('Type: ' + typeLabel);
   }
-  if (filterPaidBy) activeFilterLabels.push('Entity: ' + filterPaidBy);
-  if (filterPaidByPerson) activeFilterLabels.push('Paid by: ' + filterPaidByPerson);
-  if (filterPerson) activeFilterLabels.push('Given to: ' + filterPerson);
-  if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
-  if (filterCategories.length === 1) activeFilterLabels.push('Category: ' + filterCategories[0]);
-  else if (filterCategories.length > 1) activeFilterLabels.push('Categories: ' + filterCategories.join(', '));
-  if (filterPaymentSource) activeFilterLabels.push('Paid from: ' + filterPaymentSource);
+  if (filterPaidByEntities.length > 0) {
+    const label = formatMultiFilterLabel('Entity', filterPaidByEntities);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterPaidByPersons.length > 0) {
+    const label = formatMultiFilterLabel('Paid by', filterPaidByPersons);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterPersons.length > 0) {
+    const label = formatMultiFilterLabel('Given to', filterPersons);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterVehicles.length > 0) {
+    const label = formatMultiFilterLabel('Vehicle', filterVehicles);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterCategories.length > 0) {
+    const label = formatMultiFilterLabel('Categor' + (filterCategories.length > 1 ? 'ies' : 'y'), filterCategories);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterPaymentSources.length > 0) {
+    const label = formatMultiFilterLabel('Paid from', filterPaymentSources);
+    if (label) activeFilterLabels.push(label);
+  }
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   useEffect(() => {
     fetchExpenses();
-  }, [page, pageSize, filterType, filterVehicle, filterCategories, filterPerson, filterPaidByPerson, filterPaidBy, filterPaymentSource, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
+  }, [page, pageSize, filterType, filterVehicles, filterCategories, filterPersons, filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (searchParams.get('add') === '1') {
@@ -602,51 +620,54 @@ export default function ExpensesPage() {
                   <label className="text-xs text-gray-500 mb-1 block">Date To</label>
                   <Input className="min-w-0" type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setFilterMonth(''); }} />
                 </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Entity</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterPaidBy} onChange={(e) => setFilterPaidBy(e.target.value)}>
-                    <option value="">All</option>
-                    <option value="JM transport">JM Transport</option>
-                    <option value="Mahesh">Mahesh</option>
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Who Paid</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterPaidByPerson} onChange={(e) => setFilterPaidByPerson(e.target.value)}>
-                    <option value="">All</option>
-                    {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Given To</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)}>
-                    <option value="">All</option>
-                    {partners.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Vehicle</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterVehicle} onChange={(e) => setFilterVehicle(e.target.value)}>
-                    <option value="">All</option>
-                    {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                </div>
+                <MultiSelectFilter
+                  label="Entity"
+                  options={['JM transport', 'Mahesh']}
+                  selected={filterPaidByEntities}
+                  onChange={setFilterPaidByEntities}
+                  placeholder="All entities"
+                  searchPlaceholder="Search entity..."
+                />
+                <MultiSelectFilter
+                  label="Who Paid"
+                  options={JM_PARTNERS}
+                  selected={filterPaidByPersons}
+                  onChange={setFilterPaidByPersons}
+                  placeholder="All"
+                  searchPlaceholder="Search person..."
+                />
+                <MultiSelectFilter
+                  label="Given To"
+                  options={partners}
+                  selected={filterPersons}
+                  onChange={setFilterPersons}
+                  placeholder="All"
+                  searchPlaceholder="Search partner..."
+                />
+                <MultiSelectFilter
+                  label="Vehicle"
+                  options={vehicles}
+                  selected={filterVehicles}
+                  onChange={setFilterVehicles}
+                  placeholder="All vehicles"
+                  searchPlaceholder="Search vehicle..."
+                />
                 <MultiSelectFilter
                   label="Category"
                   options={allCategories}
                   selected={filterCategories}
                   onChange={setFilterCategories}
                   placeholder="All categories"
-                  searchable
                   searchPlaceholder="Search categories..."
                 />
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Paid From</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterPaymentSource} onChange={(e) => setFilterPaymentSource(e.target.value)}>
-                    <option value="">All</option>
-                    {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
+                <MultiSelectFilter
+                  label="Paid From"
+                  options={PAYMENT_SOURCES}
+                  selected={filterPaymentSources}
+                  onChange={setFilterPaymentSources}
+                  placeholder="All"
+                  searchPlaceholder="Search source..."
+                />
               </div>
               {hasActiveFilters && (
                 <button onClick={clearFilters} className="mt-3 flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">

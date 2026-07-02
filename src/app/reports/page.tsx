@@ -14,6 +14,8 @@ import {
   type VehiclePlRow,
 } from '@/lib/reports';
 import { PageHeader } from '@/components/page-header';
+import { MultiSelectFilter } from '@/components/multi-select-filter';
+import { formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,8 +45,8 @@ export default function ReportsPage() {
   const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterVehicle, setFilterVehicle] = useState('');
-  const [filterEntity, setFilterEntity] = useState('');
+  const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
+  const [filterEntities, setFilterEntities] = useState<string[]>([]);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -59,15 +61,15 @@ export default function ReportsPage() {
     filterMonth !== currentMonth ||
     !!filterDateFrom ||
     !!filterDateTo ||
-    !!filterVehicle ||
-    !!filterEntity;
+    filterVehicles.length > 0 ||
+    filterEntities.length > 0;
 
   function clearFilters() {
     setFilterMonth(currentMonth);
     setFilterDateFrom('');
     setFilterDateTo('');
-    setFilterVehicle('');
-    setFilterEntity('');
+    setFilterVehicles([]);
+    setFilterEntities([]);
   }
 
   const activeFilterLabels: string[] = [];
@@ -79,8 +81,14 @@ export default function ReportsPage() {
   }
   if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
   if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
-  if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
-  if (filterEntity) activeFilterLabels.push('Entity: ' + filterEntity);
+  if (filterVehicles.length > 0) {
+    const label = formatMultiFilterLabel('Vehicle', filterVehicles);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterEntities.length > 0) {
+    const label = formatMultiFilterLabel('Entity', filterEntities);
+    if (label) activeFilterLabels.push(label);
+  }
 
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').order('vehicle_number').then(({ data }) => {
@@ -93,7 +101,7 @@ export default function ReportsPage() {
       if (hasLoadedRef.current) setRefreshing(true);
       else setLoading(true);
 
-      const filters = buildReportFilters(filterMonth, filterDateFrom, filterDateTo, filterVehicle, filterEntity);
+      const filters = buildReportFilters(filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterEntities);
 
       try {
         const [m, v, d] = await Promise.all([
@@ -113,7 +121,7 @@ export default function ReportsPage() {
       }
     }
     load();
-  }, [filterMonth, filterDateFrom, filterDateTo, filterVehicle, filterEntity]);
+  }, [filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterEntities]);
 
   function toggleDay(date: string) {
     setExpandedDays((prev) => {
@@ -248,20 +256,22 @@ export default function ReportsPage() {
                 onChange={(e) => { setFilterDateTo(e.target.value); setFilterMonth(''); }}
               />
             </div>
-            <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Vehicle</label>
-              <select className={FILTER_SELECT_CLASS} value={filterVehicle} onChange={(e) => setFilterVehicle(e.target.value)}>
-                <option value="">All vehicles</option>
-                {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Entity (expenses)</label>
-              <select className={FILTER_SELECT_CLASS} value={filterEntity} onChange={(e) => setFilterEntity(e.target.value)}>
-                <option value="">All entities</option>
-                {PAID_BY_ENTITIES.map((e) => <option key={e} value={e}>{e}</option>)}
-              </select>
-            </div>
+            <MultiSelectFilter
+              label="Vehicle"
+              options={vehicles}
+              selected={filterVehicles}
+              onChange={setFilterVehicles}
+              placeholder="All vehicles"
+              searchPlaceholder="Search vehicle..."
+            />
+            <MultiSelectFilter
+              label="Entity (expenses)"
+              options={PAID_BY_ENTITIES}
+              selected={filterEntities}
+              onChange={setFilterEntities}
+              placeholder="All entities"
+              searchPlaceholder="Search entity..."
+            />
           </div>
         </CardContent>
       </Card>

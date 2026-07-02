@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Search, X } from 'lucide-react';
 import { FILTER_SELECT_CLASS } from '@/lib/format';
+import { type FilterOption } from '@/lib/filter-helpers';
 import { cn } from '@/lib/utils';
 
 type DropdownPosition = {
@@ -16,7 +17,7 @@ type DropdownPosition = {
 
 type MultiSelectFilterProps = {
   label: string;
-  options: string[];
+  options: readonly string[] | string[] | FilterOption[];
   selected: string[];
   onChange: (selected: string[]) => void;
   placeholder?: string;
@@ -28,13 +29,17 @@ const DROPDOWN_MIN_WIDTH = 224;
 const DROPDOWN_GAP = 4;
 const DROPDOWN_PADDING = 8;
 
+function normalizeOptions(options: readonly string[] | string[] | FilterOption[]): FilterOption[] {
+  return options.map((o) => (typeof o === 'string' ? { value: o, label: o } : o));
+}
+
 export function MultiSelectFilter({
   label,
   options,
   selected,
   onChange,
   placeholder = 'All',
-  searchable = false,
+  searchable = true,
   searchPlaceholder = 'Search...',
 }: MultiSelectFilterProps) {
   const [open, setOpen] = useState(false);
@@ -45,6 +50,12 @@ export function MultiSelectFilter({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  const normalizedOptions = useMemo(() => normalizeOptions(options), [options]);
+  const labelByValue = useMemo(
+    () => Object.fromEntries(normalizedOptions.map((o) => [o.value, o.label])),
+    [normalizedOptions],
+  );
 
   useEffect(() => {
     setMounted(true);
@@ -109,25 +120,29 @@ export function MultiSelectFilter({
     if (!open) setSearch('');
   }, [open, searchable]);
 
-  function toggleOption(option: string) {
-    if (selected.includes(option)) {
-      onChange(selected.filter((o) => o !== option));
+  function toggleOption(value: string) {
+    if (selected.includes(value)) {
+      onChange(selected.filter((o) => o !== value));
     } else {
-      onChange([...selected, option]);
+      onChange([...selected, value]);
     }
   }
 
   const filteredOptions = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return options;
-    return options.filter((option) => option.toLowerCase().includes(query));
-  }, [options, search]);
+    if (!query) return normalizedOptions;
+    return normalizedOptions.filter(
+      (option) =>
+        option.label.toLowerCase().includes(query) ||
+        option.value.toLowerCase().includes(query),
+    );
+  }, [normalizedOptions, search]);
 
   const triggerLabel =
     selected.length === 0
       ? placeholder
       : selected.length === 1
-        ? selected[0]
+        ? labelByValue[selected[0]] ?? selected[0]
         : `${selected.length} selected`;
 
   function handleOpen() {
@@ -178,16 +193,16 @@ export function MultiSelectFilter({
             ) : (
               filteredOptions.map((option) => (
                 <label
-                  key={option}
+                  key={option.value}
                   className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50 cursor-pointer"
                 >
                   <input
                     type="checkbox"
                     className="rounded border-gray-300 shrink-0"
-                    checked={selected.includes(option)}
-                    onChange={() => toggleOption(option)}
+                    checked={selected.includes(option.value)}
+                    onChange={() => toggleOption(option.value)}
                   />
-                  <span className="break-words">{option}</span>
+                  <span className="break-words">{option.label}</span>
                 </label>
               ))
             )}

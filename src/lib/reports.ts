@@ -1,11 +1,12 @@
 import { supabase } from '@/lib/supabase';
 import { getDashboardDateRange } from '@/lib/dashboard-stats';
+import { applyInFilter, hasMultiValueFilters } from '@/lib/filter-helpers';
 
 export type ReportFilterParams = {
   dateFrom: string | null;
   dateTo: string | null;
-  vehicle: string | null;
-  entity: string | null;
+  vehicles: string[];
+  entities: string[];
 };
 
 export type MonthlyPlReport = {
@@ -63,16 +64,28 @@ export function buildReportFilters(
   filterMonth: string,
   filterDateFrom: string,
   filterDateTo: string,
-  filterVehicle: string,
-  filterEntity: string,
+  filterVehicles: string[],
+  filterEntities: string[],
 ): ReportFilterParams {
   const { dateFrom, dateTo } = getDashboardDateRange(filterMonth, filterDateFrom, filterDateTo);
   return {
     dateFrom,
     dateTo,
-    vehicle: filterVehicle || null,
-    entity: filterEntity || null,
+    vehicles: filterVehicles,
+    entities: filterEntities,
   };
+}
+
+function useReportFallback(filters: ReportFilterParams): boolean {
+  return hasMultiValueFilters(filters.vehicles, filters.entities);
+}
+
+function rpcVehicle(filters: ReportFilterParams): string | null {
+  return filters.vehicles[0] || null;
+}
+
+function rpcEntity(filters: ReportFilterParams): string | null {
+  return filters.entities[0] || null;
 }
 
 type DateRangedQuery = {
@@ -92,35 +105,37 @@ function num(v: unknown): number {
 }
 
 export async function fetchMonthlyPlReport(filters: ReportFilterParams): Promise<MonthlyPlReport> {
-  const { data, error } = await supabase.rpc('monthly_pl_report', {
-    p_date_from: filters.dateFrom,
-    p_date_to: filters.dateTo,
-    p_vehicle: filters.vehicle,
-    p_entity: filters.entity,
-  });
+  if (!useReportFallback(filters)) {
+    const { data, error } = await supabase.rpc('monthly_pl_report', {
+      p_date_from: filters.dateFrom,
+      p_date_to: filters.dateTo,
+      p_vehicle: rpcVehicle(filters),
+      p_entity: rpcEntity(filters),
+    });
 
-  if (!error && data) {
-    const d = data as Record<string, unknown>;
-    return {
-      tripCount: num(d.tripCount),
-      totalRevenue: num(d.totalRevenue),
-      totalExpenses: num(d.totalExpenses),
-      netProfit: num(d.netProfit),
-      jmTotal: num(d.jmTotal),
-      maheshTotal: num(d.maheshTotal),
-      expensesByType: ((d.expensesByType as { type: string; amount: number }[]) || []).map((r) => ({
-        type: r.type,
-        amount: num(r.amount),
-      })),
-      expensesByCategory: ((d.expensesByCategory as { category: string; amount: number }[]) || []).map((r) => ({
-        category: r.category,
-        amount: num(r.amount),
-      })),
-      expensesByEntity: ((d.expensesByEntity as { entity: string; amount: number }[]) || []).map((r) => ({
-        entity: r.entity,
-        amount: num(r.amount),
-      })),
-    };
+    if (!error && data) {
+      const d = data as Record<string, unknown>;
+      return {
+        tripCount: num(d.tripCount),
+        totalRevenue: num(d.totalRevenue),
+        totalExpenses: num(d.totalExpenses),
+        netProfit: num(d.netProfit),
+        jmTotal: num(d.jmTotal),
+        maheshTotal: num(d.maheshTotal),
+        expensesByType: ((d.expensesByType as { type: string; amount: number }[]) || []).map((r) => ({
+          type: r.type,
+          amount: num(r.amount),
+        })),
+        expensesByCategory: ((d.expensesByCategory as { category: string; amount: number }[]) || []).map((r) => ({
+          category: r.category,
+          amount: num(r.amount),
+        })),
+        expensesByEntity: ((d.expensesByEntity as { entity: string; amount: number }[]) || []).map((r) => ({
+          entity: r.entity,
+          amount: num(r.amount),
+        })),
+      };
+    }
   }
 
   return fetchMonthlyPlFallback(filters);
@@ -132,15 +147,15 @@ async function fetchMonthlyPlFallback(filters: ReportFilterParams): Promise<Mont
     filters.dateFrom,
     filters.dateTo,
   );
-  if (filters.vehicle) tripQ = tripQ.eq('vehicle_number', filters.vehicle);
+  tripQ = applyInFilter(tripQ, 'vehicle_number', filters.vehicles);
 
   let expQ = applyReportDateRange(
     supabase.from('expenses').select('amount, expense_type, category, paid_by'),
     filters.dateFrom,
     filters.dateTo,
   );
-  if (filters.vehicle) expQ = expQ.eq('vehicle_number', filters.vehicle);
-  if (filters.entity) expQ = expQ.eq('paid_by', filters.entity);
+  expQ = applyInFilter(expQ, 'vehicle_number', filters.vehicles);
+  expQ = applyInFilter(expQ, 'paid_by', filters.entities);
 
   const [{ data: trips }, { data: expenses }] = await Promise.all([tripQ, expQ]);
 
@@ -176,33 +191,39 @@ async function fetchMonthlyPlFallback(filters: ReportFilterParams): Promise<Mont
 }
 
 export async function fetchVehiclePlReport(filters: ReportFilterParams): Promise<VehiclePlRow[]> {
-  const { data, error } = await supabase.rpc('vehicle_pl_report', {
-    p_date_from: filters.dateFrom,
-    p_date_to: filters.dateTo,
-    p_entity: filters.entity,
-  });
+  if (!useReportFallback(filters)) {
+    const { data, error } = await supabase.rpc('vehicle_pl_report', {
+      p_date_from: filters.dateFrom,
+      p_date_to: filters.dateTo,
+      p_entity: rpcEntity(filters),
+    });
 
-  if (!error && data) {
-    const rows = (data as { vehicles: VehiclePlRow[] }).vehicles || [];
-    return rows.map((r) => ({
-      vehicle: r.vehicle,
-      tripCount: num(r.tripCount),
-      totalWeight: num(r.totalWeight),
-      revenue: num(r.revenue),
-      vehicleExpenses: num(r.vehicleExpenses),
-      netProfit: num(r.netProfit),
-    }));
+    if (!error && data) {
+      const rows = (data as { vehicles: VehiclePlRow[] }).vehicles || [];
+      return rows
+        .map((r) => ({
+          vehicle: r.vehicle,
+          tripCount: num(r.tripCount),
+          totalWeight: num(r.totalWeight),
+          revenue: num(r.revenue),
+          vehicleExpenses: num(r.vehicleExpenses),
+          netProfit: num(r.netProfit),
+        }))
+        .filter((r) => filters.vehicles.length === 0 || filters.vehicles.includes(r.vehicle));
+    }
   }
 
   return fetchVehiclePlFallback(filters);
 }
 
 async function fetchVehiclePlFallback(filters: ReportFilterParams): Promise<VehiclePlRow[]> {
-  const { data: trips } = await applyReportDateRange(
+  let tripQ = applyReportDateRange(
     supabase.from('trips').select('vehicle_number, weight_tons, total_revenue'),
     filters.dateFrom,
     filters.dateTo,
   );
+  tripQ = applyInFilter(tripQ, 'vehicle_number', filters.vehicles);
+  const { data: trips } = await tripQ;
 
   let expQ = applyReportDateRange(
     supabase
@@ -213,7 +234,7 @@ async function fetchVehiclePlFallback(filters: ReportFilterParams): Promise<Vehi
     filters.dateFrom,
     filters.dateTo,
   );
-  if (filters.entity) expQ = expQ.eq('paid_by', filters.entity);
+  expQ = applyInFilter(expQ, 'paid_by', filters.entities);
 
   const { data: expenses } = await expQ;
 
@@ -237,40 +258,42 @@ async function fetchVehiclePlFallback(filters: ReportFilterParams): Promise<Vehi
 
   return [...map.values()]
     .map((r) => ({ ...r, netProfit: r.revenue - r.vehicleExpenses }))
-    .filter((r) => r.tripCount > 0 || r.vehicleExpenses > 0)
+    .filter((r) => (filters.vehicles.length === 0 || filters.vehicles.includes(r.vehicle)) && (r.tripCount > 0 || r.vehicleExpenses > 0))
     .sort((a, b) => b.netProfit - a.netProfit);
 }
 
 export async function fetchDailyTripReport(filters: ReportFilterParams): Promise<DailyTripDay[]> {
-  const { data, error } = await supabase.rpc('daily_trip_report', {
-    p_date_from: filters.dateFrom,
-    p_date_to: filters.dateTo,
-    p_vehicle: filters.vehicle,
-    p_entity: filters.entity,
-  });
+  if (!useReportFallback(filters)) {
+    const { data, error } = await supabase.rpc('daily_trip_report', {
+      p_date_from: filters.dateFrom,
+      p_date_to: filters.dateTo,
+      p_vehicle: rpcVehicle(filters),
+      p_entity: rpcEntity(filters),
+    });
 
-  if (!error && data) {
-    const days = (data as { days: DailyTripDay[] }).days || [];
-    return days.map((d) => ({
-      date: d.date,
-      tripCount: num(d.tripCount),
-      totalWeight: num(d.totalWeight),
-      revenue: num(d.revenue),
-      vehicleExpenses: num(d.vehicleExpenses),
-      netProfit: num(d.netProfit),
-      trips: (d.trips || []).map((t) => ({
-        ...t,
-        weight_tons: num(t.weight_tons),
-        rate_per_ton: num(t.rate_per_ton),
-        total_revenue: num(t.total_revenue),
-        advance_paid: num(t.advance_paid),
-        balance_due: num(t.balance_due),
-      })),
-      expenses: (d.expenses || []).map((e) => ({
-        ...e,
-        amount: num(e.amount),
-      })),
-    }));
+    if (!error && data) {
+      const days = (data as { days: DailyTripDay[] }).days || [];
+      return days.map((d) => ({
+        date: d.date,
+        tripCount: num(d.tripCount),
+        totalWeight: num(d.totalWeight),
+        revenue: num(d.revenue),
+        vehicleExpenses: num(d.vehicleExpenses),
+        netProfit: num(d.netProfit),
+        trips: (d.trips || []).map((t) => ({
+          ...t,
+          weight_tons: num(t.weight_tons),
+          rate_per_ton: num(t.rate_per_ton),
+          total_revenue: num(t.total_revenue),
+          advance_paid: num(t.advance_paid),
+          balance_due: num(t.balance_due),
+        })),
+        expenses: (d.expenses || []).map((e) => ({
+          ...e,
+          amount: num(e.amount),
+        })),
+      }));
+    }
   }
 
   return fetchDailyTripFallback(filters);
@@ -282,7 +305,7 @@ async function fetchDailyTripFallback(filters: ReportFilterParams): Promise<Dail
     filters.dateFrom,
     filters.dateTo,
   );
-  if (filters.vehicle) tripQ = tripQ.eq('vehicle_number', filters.vehicle);
+  tripQ = applyInFilter(tripQ, 'vehicle_number', filters.vehicles);
 
   let expQ = applyReportDateRange(
     supabase
@@ -293,8 +316,8 @@ async function fetchDailyTripFallback(filters: ReportFilterParams): Promise<Dail
     filters.dateFrom,
     filters.dateTo,
   );
-  if (filters.vehicle) expQ = expQ.eq('vehicle_number', filters.vehicle);
-  if (filters.entity) expQ = expQ.eq('paid_by', filters.entity);
+  expQ = applyInFilter(expQ, 'vehicle_number', filters.vehicles);
+  expQ = applyInFilter(expQ, 'paid_by', filters.entities);
 
   const [{ data: trips }, { data: expenses }] = await Promise.all([tripQ, expQ]);
 

@@ -26,6 +26,8 @@ import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { ActiveFiltersBar } from '@/components/active-filters-bar';
+import { MultiSelectFilter } from '@/components/multi-select-filter';
+import { applyInFilter, applyInNumberFilter, formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
@@ -61,11 +63,11 @@ export default function CapitalPage() {
   const [cardsTableMissing, setCardsTableMissing] = useState(false);
   const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
   const [filterStatus, setFilterStatus] = useState<string>('');
-  const [filterContributor, setFilterContributor] = useState('');
+  const [filterContributors, setFilterContributors] = useState<string[]>([]);
   const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterCreditCard, setFilterCreditCard] = useState('');
+  const [filterCreditCards, setFilterCreditCards] = useState<string[]>([]);
   const [showFilters, setShowFilters] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput);
@@ -86,8 +88,8 @@ export default function CapitalPage() {
     setTotalItems: setTotalContributionsCount,
     totalPages,
   } = useServerPagination([
-    filterStatus, filterContributor, filterMonth, filterDateFrom, filterDateTo,
-    filterCreditCard, searchQuery, sortColumn, sortDirection,
+    filterStatus, filterContributors, filterMonth, filterDateFrom, filterDateTo,
+    filterCreditCards, searchQuery, sortColumn, sortDirection,
   ]);
 
   function applyCapitalFilters<Q>(query: Q): Q {
@@ -98,8 +100,8 @@ export default function CapitalPage() {
       or: (filter: string) => typeof q;
     };
     if (filterStatus) q = q.eq('status', filterStatus);
-    if (filterContributor) q = q.eq('contributor', filterContributor);
-    if (filterCreditCard) q = q.eq('card_id', Number(filterCreditCard));
+    q = applyInFilter(q, 'contributor', filterContributors);
+    q = applyInNumberFilter(q, 'card_id', filterCreditCards);
     if (filterMonth) {
       const { from, to } = getMonthDateRange(filterMonth);
       q = q.gte('date', from).lte('date', to);
@@ -154,15 +156,15 @@ export default function CapitalPage() {
   }
 
   useEffect(() => { fetchData(); }, [
-    page, pageSize, filterStatus, filterContributor, filterMonth, filterDateFrom,
-    filterDateTo, filterCreditCard, searchQuery, sortColumn, sortDirection,
+    page, pageSize, filterStatus, filterContributors, filterMonth, filterDateFrom,
+    filterDateTo, filterCreditCards, searchQuery, sortColumn, sortDirection,
   ]);
 
   useEffect(() => {
     setSelectedIds([]);
   }, [
-    page, pageSize, filterStatus, filterContributor, filterMonth, filterDateFrom,
-    filterDateTo, filterCreditCard, searchQuery, sortColumn, sortDirection,
+    page, pageSize, filterStatus, filterContributors, filterMonth, filterDateFrom,
+    filterDateTo, filterCreditCards, searchQuery, sortColumn, sortDirection,
   ]);
 
   useEffect(() => {
@@ -341,8 +343,8 @@ export default function CapitalPage() {
     !!filterDateFrom ||
     !!filterDateTo ||
     !!filterStatus ||
-    !!filterContributor ||
-    !!filterCreditCard ||
+    !!filterContributors.length ||
+    !!filterCreditCards.length ||
     !!searchQuery;
 
   function clearFilters() {
@@ -350,8 +352,8 @@ export default function CapitalPage() {
     setFilterDateFrom('');
     setFilterDateTo('');
     setFilterStatus('');
-    setFilterContributor('');
-    setFilterCreditCard('');
+    setFilterContributors([]);
+    setFilterCreditCards([]);
     setSearchInput('');
   }
 
@@ -365,10 +367,16 @@ export default function CapitalPage() {
   if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
   if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
   if (filterStatus) activeFilterLabels.push('Status: ' + filterStatus);
-  if (filterContributor) activeFilterLabels.push('Contributor: ' + filterContributor);
-  if (filterCreditCard) {
-    const card = creditCards.find((c) => String(c.id) === filterCreditCard);
-    activeFilterLabels.push('Card: ' + (card ? formatCardLabel(card) : filterCreditCard));
+  if (filterContributors.length > 0) {
+    const label = formatMultiFilterLabel('Contributor', filterContributors);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterCreditCards.length > 0) {
+    const cardLabelMap = Object.fromEntries(
+      creditCards.map((c) => [String(c.id), formatCardLabel(c)]),
+    );
+    const label = formatMultiFilterLabel('Card', filterCreditCards, cardLabelMap);
+    if (label) activeFilterLabels.push(label);
   }
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
@@ -594,22 +602,22 @@ export default function CapitalPage() {
                   <label className="text-xs text-gray-500 mb-1 block">Date To</label>
                   <Input className="min-w-0" type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setFilterMonth(''); }} />
                 </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Contributor</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterContributor} onChange={(e) => setFilterContributor(e.target.value)}>
-                    <option value="">All</option>
-                    {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Credit Card</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterCreditCard} onChange={(e) => setFilterCreditCard(e.target.value)}>
-                    <option value="">All cards</option>
-                    {creditCards.map((c) => (
-                      <option key={c.id} value={c.id}>{formatCardOption(c)}</option>
-                    ))}
-                  </select>
-                </div>
+                <MultiSelectFilter
+                  label="Contributor"
+                  options={JM_PARTNERS}
+                  selected={filterContributors}
+                  onChange={setFilterContributors}
+                  placeholder="All"
+                  searchPlaceholder="Search contributor..."
+                />
+                <MultiSelectFilter
+                  label="Credit Card"
+                  options={creditCards.map((c) => ({ value: String(c.id), label: formatCardOption(c) }))}
+                  selected={filterCreditCards}
+                  onChange={setFilterCreditCards}
+                  placeholder="All cards"
+                  searchPlaceholder="Search card..."
+                />
               </div>
               {hasActiveFilters && (
                 <button onClick={clearFilters} className="mt-3 flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">

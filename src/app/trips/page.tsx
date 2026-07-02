@@ -33,6 +33,8 @@ import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { ActiveFiltersBar } from '@/components/active-filters-bar';
+import { MultiSelectFilter } from '@/components/multi-select-filter';
+import { applyInFilter, formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
@@ -77,23 +79,23 @@ export default function TripsPage() {
   const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterVehicle, setFilterVehicle] = useState('');
-  const [filterRoute, setFilterRoute] = useState('');
-  const [filterDriver, setFilterDriver] = useState('');
+  const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
+  const [filterRoutes, setFilterRoutes] = useState<string[]>([]);
+  const [filterDrivers, setFilterDrivers] = useState<string[]>([]);
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput);
   const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
   const [summary, setSummary] = useState({ count: 0, revenue: 0, weight: 0 });
 
-  const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || !!filterVehicle || !!filterRoute || !!filterDriver || !!searchQuery;
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || filterVehicles.length > 0 || filterRoutes.length > 0 || filterDrivers.length > 0 || !!searchQuery;
 
   function clearFilters() {
     setFilterMonth(currentMonth);
     setFilterDateFrom('');
     setFilterDateTo('');
-    setFilterVehicle('');
-    setFilterRoute('');
-    setFilterDriver('');
+    setFilterVehicles([]);
+    setFilterRoutes([]);
+    setFilterDrivers([]);
     setSearchInput('');
   }
 
@@ -106,9 +108,18 @@ export default function TripsPage() {
   }
   if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
   if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
-  if (filterVehicle) activeFilterLabels.push('Vehicle: ' + filterVehicle);
-  if (filterRoute) activeFilterLabels.push('Route: ' + filterRoute);
-  if (filterDriver) activeFilterLabels.push('Driver: ' + filterDriver);
+  if (filterVehicles.length > 0) {
+    const label = formatMultiFilterLabel('Vehicle', filterVehicles);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterRoutes.length > 0) {
+    const label = formatMultiFilterLabel('Route', filterRoutes);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterDrivers.length > 0) {
+    const label = formatMultiFilterLabel('Driver', filterDrivers);
+    if (label) activeFilterLabels.push(label);
+  }
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   const {
@@ -120,20 +131,21 @@ export default function TripsPage() {
     setTotalItems: setTotalTrips,
     totalPages,
   } = useServerPagination([
-    filterMonth, filterDateFrom, filterDateTo, filterVehicle, filterRoute, filterDriver, searchQuery,
+    filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, searchQuery,
     sortColumn, sortDirection,
   ]);
 
   function applyTripFilters<Q>(query: Q): Q {
     let q = query as {
       eq: (col: string, val: string) => typeof q;
+      in: (col: string, vals: string[]) => typeof q;
       gte: (col: string, val: string) => typeof q;
       lte: (col: string, val: string) => typeof q;
       or: (filter: string) => typeof q;
     };
-    if (filterVehicle) q = q.eq('vehicle_number', filterVehicle);
-    if (filterRoute) q = q.eq('route_name', filterRoute);
-    if (filterDriver) q = q.eq('driver_name', filterDriver);
+    q = applyInFilter(q, 'vehicle_number', filterVehicles);
+    q = applyInFilter(q, 'route_name', filterRoutes);
+    q = applyInFilter(q, 'driver_name', filterDrivers);
     if (filterMonth) {
       const { from, to } = getMonthDateRange(filterMonth);
       q = q.gte('date', from).lte('date', to);
@@ -177,7 +189,7 @@ export default function TripsPage() {
 
   useEffect(() => {
     fetchTrips();
-  }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicle, filterRoute, filterDriver, searchQuery, sortColumn, sortDirection]);
+  }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, searchQuery, sortColumn, sortDirection]);
 
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
@@ -488,27 +500,30 @@ export default function TripsPage() {
                   <label className="text-xs text-gray-500 mb-1 block">Date To</label>
                   <Input className="min-w-0" type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setFilterMonth(''); }} />
                 </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Vehicle</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterVehicle} onChange={(e) => setFilterVehicle(e.target.value)}>
-                    <option value="">All</option>
-                    {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Route</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterRoute} onChange={(e) => setFilterRoute(e.target.value)}>
-                    <option value="">All</option>
-                    {routes.map((r) => <option key={r.route_name} value={r.route_name}>{r.route_name}</option>)}
-                  </select>
-                </div>
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Driver</label>
-                  <select className={FILTER_SELECT_CLASS} value={filterDriver} onChange={(e) => setFilterDriver(e.target.value)}>
-                    <option value="">All</option>
-                    {drivers.map((d) => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
+                <MultiSelectFilter
+                  label="Vehicle"
+                  options={vehicles}
+                  selected={filterVehicles}
+                  onChange={setFilterVehicles}
+                  placeholder="All vehicles"
+                  searchPlaceholder="Search vehicle..."
+                />
+                <MultiSelectFilter
+                  label="Route"
+                  options={routes.map((r) => r.route_name)}
+                  selected={filterRoutes}
+                  onChange={setFilterRoutes}
+                  placeholder="All routes"
+                  searchPlaceholder="Search route..."
+                />
+                <MultiSelectFilter
+                  label="Driver"
+                  options={drivers}
+                  selected={filterDrivers}
+                  onChange={setFilterDrivers}
+                  placeholder="All drivers"
+                  searchPlaceholder="Search driver..."
+                />
               </div>
             </CardContent>
           </Card>
