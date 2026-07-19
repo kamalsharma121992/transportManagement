@@ -91,6 +91,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [showFilters, setShowFilters] = useState(false);
   const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);
@@ -332,37 +333,42 @@ export default function ExpensesPage() {
       paid_by_person: form.paid_by_person || null,
       card_id: useCard ? cardId : null,
     };
-    if (editingId) {
-      const { error } = await supabase.from('expenses').update(payload).eq('id', editingId);
-      if (error) { toast.error(error.message); return; }
-      toast.success('Expense updated');
-    } else {
-      const { error } = await supabase.from('expenses').insert(payload);
-      if (error) { toast.error(error.message); return; }
-
-      // Auto-create capital contribution if paid by partner
-      if (form.payment_source === 'Partner' && form.paid_by_person) {
-        const { error: ccErr } = await supabase.from('capital_contributions').insert({
-          date: form.date,
-          contributor: form.paid_by_person,
-          contribution_type: payment_mode,
-          value: Number(form.amount),
-          description: form.description || form.category,
-          asset_details: cardAssetDetails(selectedCard, card_details),
-          ...(useCard ? { card_id: cardId } : {}),
-          status: 'Unpaid',
-          paid_by: 'JM transport',
-        });
-        if (ccErr) toast.error('Expense saved but capital entry failed: ' + ccErr.message);
-        else toast.success('Expense added + capital contribution recorded');
+    setSaving(true);
+    try {
+      if (editingId) {
+        const { error } = await supabase.from('expenses').update(payload).eq('id', editingId);
+        if (error) { toast.error(error.message); return; }
+        toast.success('Expense updated');
       } else {
-        toast.success('Expense added');
+        const { error } = await supabase.from('expenses').insert(payload);
+        if (error) { toast.error(error.message); return; }
+
+        // Auto-create capital contribution if paid by partner
+        if (form.payment_source === 'Partner' && form.paid_by_person) {
+          const { error: ccErr } = await supabase.from('capital_contributions').insert({
+            date: form.date,
+            contributor: form.paid_by_person,
+            contribution_type: payment_mode,
+            value: Number(form.amount),
+            description: form.description || form.category,
+            asset_details: cardAssetDetails(selectedCard, card_details),
+            ...(useCard ? { card_id: cardId } : {}),
+            status: 'Unpaid',
+            paid_by: 'JM transport',
+          });
+          if (ccErr) toast.error('Expense saved but capital entry failed: ' + ccErr.message);
+          else toast.success('Expense added + capital contribution recorded');
+        } else {
+          toast.success('Expense added');
+        }
       }
+      setDialogOpen(false);
+      setEditingId(null);
+      setForm(emptyForm);
+      fetchExpenses();
+    } finally {
+      setSaving(false);
     }
-    setDialogOpen(false);
-    setEditingId(null);
-    setForm(emptyForm);
-    fetchExpenses();
   }
 
   function startEdit(exp: Expense) {
@@ -534,7 +540,9 @@ export default function ExpensesPage() {
                   </>
                 )}
               </div>
-              <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Expense</Button>
+              <Button type="submit" className="w-full" disabled={saving}>
+                {editingId ? 'Update' : 'Add'} Expense
+              </Button>
             </form>
           </DialogContent>
         </Dialog>
