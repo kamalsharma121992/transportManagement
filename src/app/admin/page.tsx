@@ -34,7 +34,7 @@ function RoutesSection() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0 });
+  const [form, setForm] = useState({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0, commission: 0 });
 
   const {
     page,
@@ -78,13 +78,13 @@ function RoutesSection() {
       toast.success('Route added');
     }
     setDialogOpen(false); setEditingId(null);
-    setForm({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0 });
+    setForm({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0, commission: 0 });
     fetch();
   }
 
   function startEdit(r: Route) {
     setEditingId(r.id);
-    setForm({ origin: r.origin, destination: r.destination, route_name: r.route_name, distance_km: Number(r.distance_km), standard_rate_per_ton: Number(r.standard_rate_per_ton) });
+    setForm({ origin: r.origin, destination: r.destination, route_name: r.route_name, distance_km: Number(r.distance_km), standard_rate_per_ton: Number(r.standard_rate_per_ton), commission: Number(r.commission) || 0 });
     setDialogOpen(true);
   }
 
@@ -100,7 +100,7 @@ function RoutesSection() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-500">{totalRoutes} routes</p>
-        <Button size="sm" onClick={() => { setEditingId(null); setForm({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0 }); setDialogOpen(true); }}>
+        <Button size="sm" onClick={() => { setEditingId(null); setForm({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0, commission: 0 }); setDialogOpen(true); }}>
           <Plus className="h-4 w-4 mr-1" /> Add Route
         </Button>
         <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
@@ -128,6 +128,10 @@ function RoutesSection() {
                   <Label>Rate/Ton ({'\u20B9'})</Label>
                   <Input type="number" step="0.01" value={form.standard_rate_per_ton || ''} onChange={(e) => setForm({ ...form, standard_rate_per_ton: Number(e.target.value) })} required />
                 </div>
+                <div>
+                  <Label>Commission ({'\u20B9'})</Label>
+                  <Input type="number" step="0.01" value={form.commission || ''} onChange={(e) => setForm({ ...form, commission: Number(e.target.value) })} />
+                </div>
               </div>
               <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Route</Button>
             </form>
@@ -144,14 +148,15 @@ function RoutesSection() {
                 <TableHead>Destination</TableHead>
                 <TableHead className="text-right">Distance</TableHead>
                 <TableHead className="text-right">Rate/Ton</TableHead>
+                <TableHead className="text-right">Commission</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-6">Loading...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-6">Loading...</TableCell></TableRow>
               ) : routes.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-6 text-gray-500">No routes</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-6 text-gray-500">No routes</TableCell></TableRow>
               ) : routes.map(r => (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">{r.route_name}</TableCell>
@@ -159,6 +164,7 @@ function RoutesSection() {
                   <TableCell>{r.destination}</TableCell>
                   <TableCell className="text-right">{Number(r.distance_km)} km</TableCell>
                   <TableCell className="text-right">{'\u20B9'}{Number(r.standard_rate_per_ton)}</TableCell>
+                  <TableCell className="text-right">{'\u20B9'}{Number(r.commission) || 0}</TableCell>
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" onClick={() => startEdit(r)}><Pencil className="h-4 w-4" /></Button>

@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS routes (
   route_name TEXT NOT NULL UNIQUE,
   distance_km DECIMAL(10,2) NOT NULL,
   standard_rate_per_ton DECIMAL(10,2) NOT NULL,
+  commission DECIMAL(10,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

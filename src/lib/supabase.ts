@@ -40,6 +40,7 @@ export type Route = {
   route_name: string;
   distance_km: number;
   standard_rate_per_ton: number;
+  commission: number;
 };
 
 export type Driver = {
