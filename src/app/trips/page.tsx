@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { supabase, Trip } from '@/lib/supabase';
+import { supabase, Trip, TRIP_PAYMENT_STATUSES } from '@/lib/supabase';
 import { formatCurrency, formatDate, getMonthFilterOptions, getMonthDateRange, FILTER_SELECT_CLASS } from '@/lib/format';
 import {
   parseTripPdf,
@@ -28,7 +28,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -52,17 +52,23 @@ const emptyTrip: TripFormData = {
   distance_km: 0,
   rate_per_ton: 0,
   total_revenue: 0,
+  commission: 0,
   advance_paid: 0,
   balance_due: 0,
+  payment_status: 'Fully Paid',
 };
 
 const SELECT_CLASS = 'w-full min-w-[120px] border rounded-md px-2 py-1.5 text-sm bg-white';
+
+function calcNetRevenue(weight: number, rate: number, commission: number) {
+  return Math.max(Math.round((weight * rate - (commission || 0)) * 100) / 100, 0);
+}
 
 export default function TripsPage() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [drivers, setDrivers] = useState<string[]>([]);
-  const [routes, setRoutes] = useState<{ route_name: string; origin: string; destination: string; distance_km: number; standard_rate_per_ton: number }[]>([]);
+  const [routes, setRoutes] = useState<{ route_name: string; origin: string; destination: string; distance_km: number; standard_rate_per_ton: number; commission: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
@@ -82,12 +88,13 @@ export default function TripsPage() {
   const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
   const [filterRoutes, setFilterRoutes] = useState<string[]>([]);
   const [filterDrivers, setFilterDrivers] = useState<string[]>([]);
+  const [filterPaymentStatus, setFilterPaymentStatus] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput);
   const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
-  const [summary, setSummary] = useState({ count: 0, revenue: 0, weight: 0 });
+  const [summary, setSummary] = useState({ count: 0, revenue: 0, weight: 0, pendingRevenue: 0, paidRevenue: 0 });
 
-  const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || filterVehicles.length > 0 || filterRoutes.length > 0 || filterDrivers.length > 0 || !!searchQuery;
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || filterVehicles.length > 0 || filterRoutes.length > 0 || filterDrivers.length > 0 || !!filterPaymentStatus || !!searchQuery;
 
   function clearFilters() {
     setFilterMonth(currentMonth);
@@ -96,6 +103,7 @@ export default function TripsPage() {
     setFilterVehicles([]);
     setFilterRoutes([]);
     setFilterDrivers([]);
+    setFilterPaymentStatus('');
     setSearchInput('');
   }
 
@@ -120,6 +128,7 @@ export default function TripsPage() {
     const label = formatMultiFilterLabel('Driver', filterDrivers);
     if (label) activeFilterLabels.push(label);
   }
+  if (filterPaymentStatus) activeFilterLabels.push('Payment: ' + filterPaymentStatus);
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   const {
@@ -131,7 +140,7 @@ export default function TripsPage() {
     setTotalItems: setTotalTrips,
     totalPages,
   } = useServerPagination([
-    filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, searchQuery,
+    filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, filterPaymentStatus, searchQuery,
     sortColumn, sortDirection,
   ]);
 
@@ -146,6 +155,7 @@ export default function TripsPage() {
     q = applyInFilter(q, 'vehicle_number', filterVehicles);
     q = applyInFilter(q, 'route_name', filterRoutes);
     q = applyInFilter(q, 'driver_name', filterDrivers);
+    if (filterPaymentStatus) q = q.eq('payment_status', filterPaymentStatus);
     if (filterMonth) {
       const { from, to } = getMonthDateRange(filterMonth);
       q = q.gte('date', from).lte('date', to);
@@ -171,25 +181,28 @@ export default function TripsPage() {
     );
     const { data, count, error } = await listQuery.range(from, to);
 
-    const summaryQuery = applyTripFilters(supabase.from('trips').select('total_revenue, weight_tons'));
+    const summaryQuery = applyTripFilters(supabase.from('trips').select('total_revenue, weight_tons, payment_status'));
     const { data: summaryRows, error: summaryError } = await summaryQuery;
 
     if (error) { toast.error('Failed to load trips: ' + error.message); setLoading(false); return; }
     if (summaryError) { toast.error('Failed to load trip summary: ' + summaryError.message); }
 
+    const rows = (summaryRows || []) as { total_revenue: number; weight_tons: number; payment_status: string }[];
     setTrips(data || []);
     setTotalTrips(count ?? 0);
     setSummary({
       count: count ?? 0,
-      revenue: (summaryRows || []).reduce((s, t) => s + Number(t.total_revenue), 0),
-      weight: (summaryRows || []).reduce((s, t) => s + Number(t.weight_tons), 0),
+      revenue: rows.reduce((s, t) => s + Number(t.total_revenue), 0),
+      weight: rows.reduce((s, t) => s + Number(t.weight_tons), 0),
+      pendingRevenue: rows.filter((t) => t.payment_status !== 'Fully Paid').reduce((s, t) => s + Number(t.total_revenue), 0),
+      paidRevenue: rows.filter((t) => t.payment_status === 'Fully Paid').reduce((s, t) => s + Number(t.total_revenue), 0),
     });
     setLoading(false);
   }
 
   useEffect(() => {
     fetchTrips();
-  }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, searchQuery, sortColumn, sortDirection]);
+  }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, filterPaymentStatus, searchQuery, sortColumn, sortDirection]);
 
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
@@ -204,8 +217,14 @@ export default function TripsPage() {
       }
       setDrivers((data || []).map((d: { name: string }) => d.name));
     });
-    supabase.from('routes').select('route_name, origin, destination, distance_km, standard_rate_per_ton').then(({ data }) => {
-      setRoutes(data || []);
+    supabase.from('routes').select('route_name, origin, destination, distance_km, standard_rate_per_ton, commission').then(({ data, error }) => {
+      if (error) {
+        supabase.from('routes').select('route_name, origin, destination, distance_km, standard_rate_per_ton').then(({ data: fallback }) => {
+          setRoutes((fallback || []).map((r) => ({ ...r, commission: 0 })));
+        });
+        return;
+      }
+      setRoutes((data || []).map((r) => ({ ...r, commission: Number(r.commission) || 0 })));
     });
   }, []);
 
@@ -287,7 +306,28 @@ export default function TripsPage() {
     setParsedTrips((rows) =>
       rows.map((row) => {
         if (row.rowId !== rowId) return row;
-        const updated = recalcTripRow({ ...row, ...patch }, { vehicles, drivers, routes });
+        let nextPatch = patch;
+        if (patch.route_name !== undefined) {
+          const route = routes.find((r) => r.route_name === patch.route_name);
+          if (route) {
+            nextPatch = {
+              ...patch,
+              distance_km: Number(route.distance_km),
+              rate_per_ton: Number(route.standard_rate_per_ton),
+              commission: Number(route.commission) || 0,
+            };
+          }
+        }
+        if (patch.weight_tons !== undefined || patch.rate_per_ton !== undefined || patch.commission !== undefined || patch.route_name !== undefined) {
+          const weight = nextPatch.weight_tons ?? row.weight_tons;
+          const rate = nextPatch.rate_per_ton ?? row.rate_per_ton;
+          const commission = nextPatch.commission ?? row.commission;
+          nextPatch = {
+            ...nextPatch,
+            total_revenue: calcNetRevenue(weight, rate, commission || 0),
+          };
+        }
+        const updated = recalcTripRow({ ...row, ...nextPatch }, { vehicles, drivers, routes });
         const missingFields = [
           !updated.date && 'Date',
           !updated.vehicle_number && 'Vehicle',
@@ -348,17 +388,33 @@ export default function TripsPage() {
 
   function handleRouteChange(routeName: string) {
     const route = routes.find((r) => r.route_name === routeName);
+    if (!route) {
+      setForm((f) => ({ ...f, route_name: routeName }));
+      return;
+    }
+    const rate = Number(route.standard_rate_per_ton) || 0;
+    const commission = Number(route.commission) || 0;
     setForm((f) => ({
       ...f,
       route_name: routeName,
-      distance_km: route ? Number(route.distance_km) : f.distance_km,
-      rate_per_ton: route ? Number(route.standard_rate_per_ton) : f.rate_per_ton,
-      total_revenue: f.weight_tons * (route ? Number(route.standard_rate_per_ton) : f.rate_per_ton),
+      distance_km: Number(route.distance_km) || f.distance_km,
+      rate_per_ton: rate,
+      commission,
+      total_revenue: calcNetRevenue(f.weight_tons, rate, commission),
     }));
   }
 
-  function recalcRevenue(weight: number, rate: number) {
-    setForm((f) => ({ ...f, weight_tons: weight, rate_per_ton: rate, total_revenue: weight * rate }));
+  function recalcRevenue(weight: number, rate: number, commission?: number) {
+    setForm((f) => {
+      const nextCommission = commission ?? f.commission;
+      return {
+        ...f,
+        weight_tons: weight,
+        rate_per_ton: rate,
+        commission: nextCommission,
+        total_revenue: calcNetRevenue(weight, rate, nextCommission),
+      };
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -387,8 +443,10 @@ export default function TripsPage() {
       distance_km: Number(trip.distance_km),
       rate_per_ton: Number(trip.rate_per_ton),
       total_revenue: Number(trip.total_revenue),
+      commission: Number(trip.commission) || 0,
       advance_paid: Number(trip.advance_paid),
       balance_due: Number(trip.balance_due),
+      payment_status: trip.payment_status === 'Fully Paid' ? 'Fully Paid' : 'Pending',
     });
     setDialogOpen(true);
   }
@@ -443,7 +501,7 @@ export default function TripsPage() {
       />
 
       {/* Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-gray-500">Trips</p>
@@ -452,14 +510,20 @@ export default function TripsPage() {
         </Card>
         <Card>
           <CardContent className="py-3 px-4">
-            <p className="text-xs text-gray-500">Total Weight</p>
-            <p className="text-xl font-bold text-gray-900">{summary.weight.toFixed(2)} T</p>
+            <p className="text-xs text-gray-500">Total Revenue</p>
+            <p className="text-xl font-bold text-green-600">{formatCurrency(summary.revenue)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3 px-4">
-            <p className="text-xs text-gray-500">Total Revenue</p>
-            <p className="text-xl font-bold text-green-600">{formatCurrency(summary.revenue)}</p>
+            <p className="text-xs text-amber-600">Pending</p>
+            <p className="text-xl font-bold text-amber-700">{formatCurrency(summary.pendingRevenue)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-3 px-4">
+            <p className="text-xs text-green-600">Fully Paid</p>
+            <p className="text-xl font-bold text-green-700">{formatCurrency(summary.paidRevenue)}</p>
           </CardContent>
         </Card>
       </div>
@@ -524,6 +588,19 @@ export default function TripsPage() {
                   placeholder="All drivers"
                   searchPlaceholder="Search driver..."
                 />
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Payment</label>
+                  <select
+                    className={FILTER_SELECT_CLASS}
+                    value={filterPaymentStatus}
+                    onChange={(e) => setFilterPaymentStatus(e.target.value)}
+                  >
+                    <option value="">All</option>
+                    {TRIP_PAYMENT_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -769,8 +846,23 @@ export default function TripsPage() {
                 <Input type="number" step="0.01" value={form.rate_per_ton || ''} onChange={(e) => recalcRevenue(form.weight_tons, Number(e.target.value))} required />
               </div>
               <div>
+                <Label>Commission ({'\u20B9'})</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.commission}
+                  onChange={(e) => {
+                    const commission = e.target.value === '' ? 0 : Number(e.target.value);
+                    recalcRevenue(form.weight_tons, form.rate_per_ton, commission);
+                  }}
+                />
+                <p className="text-[10px] text-gray-400 mt-1">Auto from route — editable</p>
+              </div>
+              <div>
                 <Label>Total Revenue</Label>
                 <Input type="number" step="0.01" value={form.total_revenue || ''} onChange={(e) => setForm({ ...form, total_revenue: Number(e.target.value) })} required />
+                <p className="text-[10px] text-gray-400 mt-1">weight × rate − commission</p>
               </div>
               <div>
                 <Label>Advance Paid</Label>
@@ -779,6 +871,25 @@ export default function TripsPage() {
               <div>
                 <Label>Balance Due</Label>
                 <Input type="number" step="0.01" value={form.balance_due || ''} onChange={(e) => setForm({ ...form, balance_due: Number(e.target.value) })} />
+              </div>
+              <div>
+                <Label>Payment</Label>
+                <select
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={form.payment_status}
+                  onChange={(e) => {
+                    const payment_status = e.target.value as 'Pending' | 'Fully Paid';
+                    setForm((f) => ({
+                      ...f,
+                      payment_status,
+                      ...(payment_status === 'Fully Paid' ? { balance_due: 0 } : {}),
+                    }));
+                  }}
+                >
+                  {TRIP_PAYMENT_STATUSES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Trip</Button>
@@ -798,18 +909,19 @@ export default function TripsPage() {
                   <TableHead>Driver</TableHead>
                   <TableHead className="text-right">Weight</TableHead>
                   <TableHead className="text-right">Rate/Ton</TableHead>
-                  <SortableTableHead label="Revenue" column="total_revenue" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
+                  <SortableTableHead label="Total Revenue" column="total_revenue" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
+                  <TableHead>Payment</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8">Loading...</TableCell>
+                    <TableCell colSpan={9} className="text-center py-8">Loading...</TableCell>
                   </TableRow>
                 ) : trips.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-gray-500">No trips found</TableCell>
+                    <TableCell colSpan={9} className="text-center py-8 text-gray-500">No trips found</TableCell>
                   </TableRow>
                 ) : (
                   trips.map((trip) => (
@@ -821,6 +933,17 @@ export default function TripsPage() {
                       <TableCell className="text-right">{Number(trip.weight_tons).toFixed(2)} T</TableCell>
                       <TableCell className="text-right">{formatCurrency(Number(trip.rate_per_ton))}</TableCell>
                       <TableCell className="text-right font-medium text-green-600">{formatCurrency(Number(trip.total_revenue))}</TableCell>
+                      <TableCell>
+                        {trip.payment_status === 'Fully Paid' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <CheckCircle2 className="h-3 w-3" /> Fully Paid
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                            <Clock className="h-3 w-3" /> Pending
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           <Button variant="ghost" size="icon" onClick={() => startEdit(trip)}>

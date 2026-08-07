@@ -78,9 +78,13 @@ export type Trip = {
   distance_km: number;
   rate_per_ton: number;
   total_revenue: number;
+  commission: number;
   advance_paid: number;
   balance_due: number;
+  payment_status: 'Pending' | 'Fully Paid';
 };
+
+export const TRIP_PAYMENT_STATUSES = ['Fully Paid', 'Pending'] as const;
 
 export type ExpenseType = 'vehicle' | 'operational' | 'personal' | 'other';
 

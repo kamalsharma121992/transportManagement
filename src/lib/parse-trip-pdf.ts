@@ -7,8 +7,10 @@ export type TripFormData = {
   distance_km: number;
   rate_per_ton: number;
   total_revenue: number;
+  commission: number;
   advance_paid: number;
   balance_due: number;
+  payment_status: 'Pending' | 'Fully Paid';
 };
 
 export type ParsedTripRow = TripFormData & {
@@ -26,6 +28,7 @@ export type ParseContext = {
     destination: string;
     distance_km: number;
     standard_rate_per_ton: number;
+    commission?: number;
   }[];
 };
 
@@ -48,9 +51,11 @@ const FIELD_LABELS: Record<keyof TripFormData, string> = {
   weight_tons: 'Weight',
   distance_km: 'Distance',
   rate_per_ton: 'Rate/Ton',
-  total_revenue: 'Revenue',
+  total_revenue: 'Total Revenue',
+  commission: 'Commission',
   advance_paid: 'Advance',
   balance_due: 'Balance',
+  payment_status: 'Payment',
 };
 
 const EMPTY_FORM: TripFormData = {
@@ -62,8 +67,10 @@ const EMPTY_FORM: TripFormData = {
   distance_km: 0,
   rate_per_ton: 0,
   total_revenue: 0,
+  commission: 0,
   advance_paid: 0,
   balance_due: 0,
+  payment_status: 'Fully Paid',
 };
 
 type PdfTextItem = { str: string; x: number; y: number };
@@ -155,12 +162,17 @@ function applyRouteDefaults(form: TripFormData, context: ParseContext) {
   if (!route) return;
   if (!form.distance_km) form.distance_km = Number(route.distance_km);
   if (!form.rate_per_ton) form.rate_per_ton = Number(route.standard_rate_per_ton);
+  if (form.commission == null) form.commission = Number(route.commission) || 0;
+}
+
+function calcNetRevenue(weight: number, rate: number, commission: number) {
+  return Math.max(Math.round((weight * rate - (commission || 0)) * 100) / 100, 0);
 }
 
 function finalizeTrip(form: TripFormData): TripFormData {
   const result = { ...form };
   if (!result.total_revenue && result.weight_tons > 0 && result.rate_per_ton > 0) {
-    result.total_revenue = Math.round(result.weight_tons * result.rate_per_ton * 100) / 100;
+    result.total_revenue = calcNetRevenue(result.weight_tons, result.rate_per_ton, result.commission || 0);
   }
   if (result.balance_due === 0 && result.total_revenue > 0) {
     result.balance_due = Math.max(result.total_revenue - (result.advance_paid || 0), 0);

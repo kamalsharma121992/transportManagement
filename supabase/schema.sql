@@ -59,8 +59,10 @@ CREATE TABLE IF NOT EXISTS trips (
   distance_km DECIMAL(10,2) NOT NULL,
   rate_per_ton DECIMAL(10,2) NOT NULL,
   total_revenue DECIMAL(12,2) NOT NULL,
+  commission DECIMAL(10,2) NOT NULL DEFAULT 0,
   advance_paid DECIMAL(12,2) DEFAULT 0,
   balance_due DECIMAL(12,2) DEFAULT 0,
+  payment_status TEXT NOT NULL DEFAULT 'Fully Paid',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
