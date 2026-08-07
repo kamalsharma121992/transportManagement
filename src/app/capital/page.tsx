@@ -211,6 +211,7 @@ export default function CapitalPage() {
       status: form.status,
       paid_by: form.paid_by,
       paid_date: form.status === 'Paid' ? (form.paid_date || form.date) : null,
+      ...(form.status !== 'Paid' ? { payment_source: null } : {}),
       ...(form.contribution_type === 'Credit Card' && cardId ? { card_id: cardId } : {}),
     };
     if (editingId) {
@@ -312,7 +313,7 @@ export default function CapitalPage() {
 
   async function handleMarkUnpaid(id: number) {
     const { error } = await supabase.from('capital_contributions')
-      .update({ status: 'Unpaid', paid_date: null })
+      .update({ status: 'Unpaid', paid_date: null, payment_source: null })
       .eq('id', id);
     if (error) { toast.error(error.message); return; }
     toast.success('Marked as unpaid');
@@ -713,7 +714,7 @@ export default function CapitalPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {c.payment_source ? (
+                        {c.status === 'Paid' && c.payment_source ? (
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${c.payment_source === 'Revenue' ? 'bg-green-100 text-green-800' : 'bg-violet-100 text-violet-800'}`}>
                             {c.payment_source}
                           </span>
