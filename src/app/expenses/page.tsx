@@ -45,6 +45,7 @@ import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
+import { cn } from '@/lib/utils';
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -96,6 +97,7 @@ export default function ExpensesPage() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [showFilters, setShowFilters] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);
   const [allCategories, setAllCategories] = useState<string[]>(
     buildAllCategoryNames(DEFAULT_CATEGORIES_BY_TYPE).filter((c) => c !== EXPENSE_ADVANCE_CATEGORY),
@@ -244,6 +246,7 @@ export default function ExpensesPage() {
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   useEffect(() => {
+    setExpandedId(null);
     fetchExpenses();
   }, [page, pageSize, filterType, filterVehicles, filterCategories, filterPersons, filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
 
@@ -459,7 +462,7 @@ export default function ExpensesPage() {
         onClearFilters={clearFilters}
       />
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setEditingId(null); setForm(emptyForm); } }}>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
             <DialogHeader>
               <DialogTitle>{editingId ? 'Edit Expense' : 'New Expense'}</DialogTitle>
             </DialogHeader>
@@ -628,9 +631,9 @@ export default function ExpensesPage() {
       </div>
 
       {/* Type tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-full sm:w-fit overflow-x-auto">
         <button onClick={() => setFilterType('')}
-          className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === '' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+          className={`shrink-0 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === '' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
           All
         </button>
         {EXPENSE_TYPES.map((t) => (
@@ -640,7 +643,7 @@ export default function ExpensesPage() {
               prev.filter((c) => categoriesByType[t.value].includes(c)),
             );
           }}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === t.value ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+            className={`shrink-0 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === t.value ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
             {t.label}
           </button>
         ))}
@@ -738,8 +741,142 @@ export default function ExpensesPage() {
         )}
       </div>
 
-      {/* Table */}
-      <Card>
+      {/* Mobile cards */}
+      <div className="md:hidden space-y-3">
+        {loading ? (
+          <Card>
+            <CardContent className="py-8 text-center text-gray-500">Loading...</CardContent>
+          </Card>
+        ) : expenses.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-gray-500">No expenses found</CardContent>
+          </Card>
+        ) : (
+          expenses.map((exp) => {
+            const expanded = expandedId === exp.id;
+            return (
+              <Card key={exp.id}>
+                <CardContent className="p-0">
+                  <button
+                    type="button"
+                    className="w-full text-left p-4 space-y-2"
+                    onClick={() => setExpandedId(expanded ? null : exp.id)}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-base truncate">
+                          <span className="font-normal text-gray-500">Given to: </span>
+                          <span className="font-bold text-gray-900">{exp.person || '—'}</span>
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{formatDate(exp.date)}</p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', categoryColor[exp.category] || 'bg-gray-100 text-gray-800')}>
+                            {exp.category}
+                          </span>
+                          <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', typeColors[exp.expense_type])}>
+                            {exp.expense_type}
+                          </span>
+                          {exp.vehicle_number && (
+                            <Badge variant="outline" className="text-xs">{exp.vehicle_number}</Badge>
+                          )}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-base font-bold text-red-600">{formatCurrency(Number(exp.amount))}</p>
+                      </div>
+                    </div>
+                    {exp.description && (
+                      <p className={cn('text-sm text-gray-600', !expanded && 'line-clamp-1')}>
+                        {exp.description}
+                      </p>
+                    )}
+                    <div className="flex items-center justify-between text-xs text-gray-400">
+                      <span>{expanded ? 'Hide details' : 'Tap for details'}</span>
+                      {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    </div>
+                  </button>
+
+                  {expanded && (
+                    <div className="border-t px-4 py-3 space-y-2 bg-gray-50/80">
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Entity</p>
+                          <p>
+                            <span className={cn(
+                              'px-2 py-0.5 rounded-full text-xs font-medium',
+                              exp.paid_by === 'Mahesh' ? 'bg-orange-100 text-orange-800' : 'bg-sky-100 text-sky-800',
+                            )}>
+                              {exp.paid_by === 'JM transport' ? 'JM' : 'Mahesh'}
+                            </span>
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Paid by</p>
+                          <p className="font-medium text-gray-800">{exp.paid_by_person || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Paid from</p>
+                          <p>
+                            <span className={cn(
+                              'px-2 py-0.5 rounded-full text-xs font-medium',
+                              exp.payment_source === 'Revenue' ? 'bg-green-100 text-green-800' : 'bg-violet-100 text-violet-800',
+                            )}>
+                              {exp.payment_source || 'Partner'}
+                            </span>
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Status</p>
+                          <p className="font-medium text-gray-800">{exp.status || '—'}</p>
+                        </div>
+                        {exp.bill_receipt_ref && (
+                          <div className="col-span-2">
+                            <p className="text-[10px] uppercase text-gray-500">Bill / receipt</p>
+                            <p className="font-medium text-gray-800 break-all">{exp.bill_receipt_ref}</p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={(e) => { e.stopPropagation(); startEdit(exp); }}
+                        >
+                          <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 text-red-600 hover:text-red-700"
+                          onClick={(e) => { e.stopPropagation(); handleDelete(exp.id); }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })
+        )}
+        <Card>
+          <CardContent className="p-0">
+            <PaginationControls
+              page={page}
+              pageSize={pageSize}
+              totalItems={totalExpenses}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Desktop table */}
+      <Card className="hidden md:block">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <Table>
