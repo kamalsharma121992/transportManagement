@@ -67,6 +67,7 @@ export default function ExpenseAdvancesPage() {
   const [rows, setRows] = useState<ExpenseAdvanceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterTab>('open');
+  const [showSummary, setShowSummary] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filterPersons, setFilterPersons] = useState<string[]>([]);
   const [filterAlerts, setFilterAlerts] = useState<AlertFilter[]>([]);
@@ -390,14 +391,6 @@ export default function ExpenseAdvancesPage() {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
         filterLabels={activeFilterLabels}
-        actions={
-          <Link
-            href="/expenses?add=1"
-            className="inline-flex items-center justify-center rounded-lg text-sm font-medium bg-blue-600 text-white h-9 px-4 hover:bg-blue-700"
-          >
-            <Plus className="h-4 w-4 mr-1" /> Add via Expenses
-          </Link>
-        }
       />
 
       <p className="text-sm text-gray-500 -mt-2">
@@ -405,31 +398,50 @@ export default function ExpenseAdvancesPage() {
         {' '}(driver or partner), then settle the breakup here. Warning after {EXPENSE_ADVANCE_WARNING_DAYS} days; overdue after {EXPENSE_ADVANCE_OVERDUE_DAYS} days.
       </p>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Card>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs text-gray-500">Open / Partial</p>
-            <p className="text-xl font-bold">{summary.openCount}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs text-gray-500">Cash with people</p>
-            <p className="text-xl font-bold text-amber-700">{formatCurrency(summary.openAmount)}</p>
-          </CardContent>
-        </Card>
-        <Card className={summary.warning ? 'border-amber-400 bg-amber-50' : ''}>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs font-medium text-amber-700">Warning (≥{EXPENSE_ADVANCE_WARNING_DAYS}d)</p>
-            <p className="text-xl font-bold text-amber-800">{summary.warning}</p>
-          </CardContent>
-        </Card>
-        <Card className={summary.overdue ? 'border-red-500 bg-red-50' : ''}>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs font-medium text-red-700">Overdue (≥{EXPENSE_ADVANCE_OVERDUE_DAYS}d)</p>
-            <p className="text-xl font-bold text-red-800">{summary.overdue}</p>
-          </CardContent>
-        </Card>
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={() => setShowSummary((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border bg-white px-3 py-2.5 text-left shadow-sm"
+        >
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Open / Partial</p>
+            <p className="text-sm font-semibold text-gray-900 truncate">
+              {summary.openCount}
+            </p>
+          </div>
+          {showSummary
+            ? <ChevronUp className="h-4 w-4 shrink-0 text-gray-500" />
+            : <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />}
+        </button>
+        {showSummary && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Card>
+              <CardContent className="py-3 px-4">
+                <p className="text-xs text-gray-500">Open / Partial</p>
+                <p className="text-xl font-bold">{summary.openCount}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="py-3 px-4">
+                <p className="text-xs text-gray-500">Cash with people</p>
+                <p className="text-xl font-bold text-amber-700">{formatCurrency(summary.openAmount)}</p>
+              </CardContent>
+            </Card>
+            <Card className={summary.warning ? 'border-amber-400 bg-amber-50' : ''}>
+              <CardContent className="py-3 px-4">
+                <p className="text-xs font-medium text-amber-700">Warning (≥{EXPENSE_ADVANCE_WARNING_DAYS}d)</p>
+                <p className="text-xl font-bold text-amber-800">{summary.warning}</p>
+              </CardContent>
+            </Card>
+            <Card className={summary.overdue ? 'border-red-500 bg-red-50' : ''}>
+              <CardContent className="py-3 px-4">
+                <p className="text-xs font-medium text-red-700">Overdue (≥{EXPENSE_ADVANCE_OVERDUE_DAYS}d)</p>
+                <p className="text-xl font-bold text-red-800">{summary.overdue}</p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
