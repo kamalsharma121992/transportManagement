@@ -31,7 +31,8 @@ BEGIN
          coalesce(sum(amount) FILTER (WHERE paid_by = 'Mahesh'), 0)
   INTO exp_total, jm_total, mahesh_total
   FROM expenses e
-  WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+  WHERE e.category IS DISTINCT FROM 'Expense Advance'
+    AND (p_date_from IS NULL OR e.date >= p_date_from)
     AND (p_date_to IS NULL OR e.date <= p_date_to)
     AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
     AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity);
@@ -48,7 +49,8 @@ BEGIN
       FROM (
         SELECT e.expense_type::text AS expense_type, sum(e.amount) AS total
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
@@ -61,7 +63,8 @@ BEGIN
       FROM (
         SELECT e.category, sum(e.amount) AS total
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
@@ -74,7 +77,8 @@ BEGIN
       FROM (
         SELECT e.paid_by, sum(e.amount) AS total
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
@@ -124,7 +128,8 @@ BEGIN
       LEFT JOIN (
         SELECT vehicle_number, coalesce(sum(amount), 0) AS expenses
         FROM expenses
-        WHERE (p_date_from IS NULL OR date >= p_date_from)
+        WHERE category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR date >= p_date_from)
           AND (p_date_to IS NULL OR date <= p_date_to)
           AND expense_type = 'vehicle'
           AND vehicle_number IS NOT NULL
@@ -161,7 +166,8 @@ BEGIN
         WHERE (p_vehicle IS NULL OR p_vehicle = '' OR t.vehicle_number = p_vehicle)
       UNION ALL
       SELECT min(e.date) FROM expenses e
-        WHERE e.expense_type = 'vehicle'
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND e.expense_type = 'vehicle'
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
     ) bounds WHERE d IS NOT NULL;
@@ -173,7 +179,8 @@ BEGIN
         WHERE (p_vehicle IS NULL OR p_vehicle = '' OR t.vehicle_number = p_vehicle)
       UNION ALL
       SELECT max(e.date) FROM expenses e
-        WHERE e.expense_type = 'vehicle'
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND e.expense_type = 'vehicle'
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
     ) bounds WHERE d IS NOT NULL;
@@ -232,7 +239,8 @@ BEGIN
                    ) ORDER BY e.id
                  ), '[]'::jsonb) AS expense_rows
           FROM expenses e
-          WHERE e.date = d.day
+          WHERE e.category IS DISTINCT FROM 'Expense Advance'
+            AND e.date = d.day
             AND e.expense_type = 'vehicle'
             AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
             AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)

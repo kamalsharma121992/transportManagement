@@ -208,6 +208,8 @@ INSERT INTO expense_categories (name, expense_type, sort_order) VALUES
   ('Partner Allowance', 'operational', 8),
   ('Office Expense', 'operational', 9),
   ('Credit Card Payment', 'operational', 10),
+  ('Expense Advance', 'operational', 11),
+  ('Other', 'operational', 12),
   ('Personal Care', 'personal', 1),
   ('Other', 'personal', 2),
   ('Other', 'other', 1)
@@ -247,11 +249,11 @@ DECLARE
 BEGIN
   trip_pattern := CASE
     WHEN p_trip_search IS NULL OR btrim(p_trip_search) = '' THEN NULL
-    ELSE '%' || replace(replace(replace(btrim(p_trip_search), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+    ELSE '%' || replace(replace(replace(btrim(p_trip_search), '\', '\'), '%', '\%'), '_', '\_') || '%'
   END;
   exp_pattern := CASE
     WHEN p_exp_search IS NULL OR btrim(p_exp_search) = '' THEN NULL
-    ELSE '%' || replace(replace(replace(btrim(p_exp_search), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+    ELSE '%' || replace(replace(replace(btrim(p_exp_search), '\', '\'), '%', '\%'), '_', '\_') || '%'
   END;
 
   SELECT count(*)::bigint, coalesce(sum(total_revenue), 0)
@@ -273,7 +275,8 @@ BEGIN
          coalesce(sum(amount) FILTER (WHERE paid_by = 'Mahesh'), 0)
   INTO exp_count, exp_total, jm_total, mahesh_total
   FROM expenses e
-  WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+  WHERE e.category IS DISTINCT FROM 'Expense Advance'
+    AND (p_date_from IS NULL OR e.date >= p_date_from)
     AND (p_date_to IS NULL OR e.date <= p_date_to)
     AND (p_exp_paid_by IS NULL OR p_exp_paid_by = '' OR e.paid_by = p_exp_paid_by)
     AND (p_exp_paid_by_person IS NULL OR p_exp_paid_by_person = '' OR e.paid_by_person = p_exp_paid_by_person)
@@ -293,7 +296,7 @@ BEGIN
 
   SELECT coalesce(sum(value), 0) INTO capital_total FROM capital_contributions;
   SELECT coalesce(sum(total_revenue), 0) INTO cash_revenue FROM trips;
-  SELECT coalesce(sum(amount), 0) INTO cash_exp_revenue FROM expenses WHERE payment_source = 'Revenue';
+  SELECT coalesce(sum(amount), 0) INTO cash_exp_revenue FROM expenses WHERE payment_source = 'Revenue' AND category IS DISTINCT FROM 'Expense Advance';
   SELECT coalesce(sum(value), 0) INTO cash_cap_revenue
   FROM capital_contributions WHERE status = 'Paid' AND payment_source = 'Revenue';
 
@@ -328,7 +331,8 @@ BEGIN
       FROM (
         SELECT e.date, sum(e.amount) AS expenses
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_exp_paid_by IS NULL OR p_exp_paid_by = '' OR e.paid_by = p_exp_paid_by)
           AND (p_exp_paid_by_person IS NULL OR p_exp_paid_by_person = '' OR e.paid_by_person = p_exp_paid_by_person)
@@ -353,7 +357,8 @@ BEGIN
       FROM (
         SELECT e.category, sum(e.amount) AS total
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_exp_paid_by IS NULL OR p_exp_paid_by = '' OR e.paid_by = p_exp_paid_by)
           AND (p_exp_paid_by_person IS NULL OR p_exp_paid_by_person = '' OR e.paid_by_person = p_exp_paid_by_person)
@@ -379,7 +384,8 @@ BEGIN
       FROM (
         SELECT e.vehicle_number, sum(e.amount) AS total
         FROM expenses e
-        WHERE e.expense_type = 'vehicle'
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND e.expense_type = 'vehicle'
           AND e.vehicle_number IS NOT NULL
           AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
@@ -441,7 +447,8 @@ BEGIN
          coalesce(sum(amount) FILTER (WHERE paid_by = 'Mahesh'), 0)
   INTO exp_total, jm_total, mahesh_total
   FROM expenses e
-  WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+  WHERE e.category IS DISTINCT FROM 'Expense Advance'
+    AND (p_date_from IS NULL OR e.date >= p_date_from)
     AND (p_date_to IS NULL OR e.date <= p_date_to)
     AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
     AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity);
@@ -458,7 +465,8 @@ BEGIN
       FROM (
         SELECT e.expense_type::text AS expense_type, sum(e.amount) AS total
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
@@ -471,7 +479,8 @@ BEGIN
       FROM (
         SELECT e.category, sum(e.amount) AS total
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
@@ -484,7 +493,8 @@ BEGIN
       FROM (
         SELECT e.paid_by, sum(e.amount) AS total
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
@@ -534,7 +544,8 @@ BEGIN
       LEFT JOIN (
         SELECT vehicle_number, coalesce(sum(amount), 0) AS expenses
         FROM expenses
-        WHERE (p_date_from IS NULL OR date >= p_date_from)
+        WHERE category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR date >= p_date_from)
           AND (p_date_to IS NULL OR date <= p_date_to)
           AND expense_type = 'vehicle'
           AND vehicle_number IS NOT NULL
@@ -571,7 +582,8 @@ BEGIN
         WHERE (p_vehicle IS NULL OR p_vehicle = '' OR t.vehicle_number = p_vehicle)
       UNION ALL
       SELECT min(e.date) FROM expenses e
-        WHERE e.expense_type = 'vehicle'
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND e.expense_type = 'vehicle'
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
     ) bounds WHERE d IS NOT NULL;
@@ -583,7 +595,8 @@ BEGIN
         WHERE (p_vehicle IS NULL OR p_vehicle = '' OR t.vehicle_number = p_vehicle)
       UNION ALL
       SELECT max(e.date) FROM expenses e
-        WHERE e.expense_type = 'vehicle'
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND e.expense_type = 'vehicle'
           AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
           AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
     ) bounds WHERE d IS NOT NULL;
@@ -642,7 +655,8 @@ BEGIN
                    ) ORDER BY e.id
                  ), '[]'::jsonb) AS expense_rows
           FROM expenses e
-          WHERE e.date = d.day
+          WHERE e.category IS DISTINCT FROM 'Expense Advance'
+            AND e.date = d.day
             AND e.expense_type = 'vehicle'
             AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
             AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
@@ -704,3 +718,29 @@ CREATE INDEX IF NOT EXISTS idx_driver_payroll_period_month ON driver_payroll_per
 ALTER TABLE driver_payroll_period ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow all on driver_payroll_period" ON driver_payroll_period;
 CREATE POLICY "Allow all on driver_payroll_period" ON driver_payroll_period FOR ALL USING (true) WITH CHECK (true);
+
+-- Expense Advances (cash float for driver/partner) — see supabase/expense_advances.sql
+CREATE TABLE IF NOT EXISTS expense_advances (
+  id SERIAL PRIMARY KEY,
+  date DATE NOT NULL,
+  person TEXT NOT NULL,
+  amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'Open',
+  source_expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_expense_advances_date ON expense_advances(date);
+CREATE INDEX IF NOT EXISTS idx_expense_advances_person ON expense_advances(person);
+CREATE INDEX IF NOT EXISTS idx_expense_advances_status ON expense_advances(status);
+
+ALTER TABLE expenses
+  ADD COLUMN IF NOT EXISTS expense_advance_id INTEGER REFERENCES expense_advances(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_expenses_expense_advance ON expenses(expense_advance_id);
+
+ALTER TABLE expense_advances ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all on expense_advances" ON expense_advances;
+CREATE POLICY "Allow all on expense_advances" ON expense_advances FOR ALL USING (true) WITH CHECK (true);
+

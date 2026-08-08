@@ -537,7 +537,7 @@ export default function PayrollPage() {
                           )}
                           {row.driver.status === 'active' && (
                             <Button size="sm" variant="ghost" onClick={() => openAdvance(row.driver.name)}>
-                              Advance
+                              Salary Adv.
                             </Button>
                           )}
                         </div>
@@ -569,7 +569,7 @@ export default function PayrollPage() {
                   <TableHead className="text-right">Leave</TableHead>
                   <TableHead className="text-right">Allowance due</TableHead>
                   <TableHead className="text-right">Allowance paid</TableHead>
-                  <TableHead className="text-right">Advances</TableHead>
+                  <TableHead className="text-right">Salary Advances</TableHead>
                   <TableHead className="text-right">Total due</TableHead>
                   <TableHead>Salary</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
@@ -655,7 +655,7 @@ export default function PayrollPage() {
                             </Button>
                           )}
                           <Button size="sm" variant="ghost" onClick={() => openAdvance(row.driver.name)}>
-                            Advance
+                              Salary Adv.
                           </Button>
                         </div>
                       </TableCell>
@@ -735,7 +735,7 @@ export default function PayrollPage() {
                     <TableHead className="text-right">Leave</TableHead>
                     <TableHead className="text-right">Allowance due</TableHead>
                     <TableHead className="text-right">Allowance paid</TableHead>
-                    <TableHead className="text-right">Advances</TableHead>
+                    <TableHead className="text-right">Salary Advances</TableHead>
                     <TableHead className="text-right">Total due</TableHead>
                     <TableHead>Salary</TableHead>
                     <TableHead className="text-right">Balance</TableHead>
@@ -843,7 +843,7 @@ export default function PayrollPage() {
                               </Button>
                             )}
                             <Button size="sm" variant="ghost" onClick={() => openAdvance(row.driver.name)}>
-                              Advance
+                              Salary Adv.
                             </Button>
                           </div>
                         </TableCell>
@@ -1022,7 +1022,7 @@ export default function PayrollPage() {
       <Dialog open={!!advanceDialog} onOpenChange={(o) => !o && setAdvanceDialog(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Give advance — {advanceDialog?.driverName}</DialogTitle>
+            <DialogTitle>Give salary advance — {advanceDialog?.driverName}</DialogTitle>
           </DialogHeader>
           {advanceDialog && (
             <div className="space-y-4">

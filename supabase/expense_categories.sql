@@ -33,6 +33,8 @@ INSERT INTO expense_categories (name, expense_type, sort_order) VALUES
   ('Partner Allowance', 'operational', 8),
   ('Office Expense', 'operational', 9),
   ('Credit Card Payment', 'operational', 10),
+  ('Expense Advance', 'operational', 11),
+  ('Other', 'operational', 12),
   ('Personal Care', 'personal', 1),
   ('Other', 'personal', 2),
   ('Other', 'other', 1)

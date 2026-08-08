@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, EXPENSE_ADVANCE_CATEGORY } from '@/lib/supabase';
 import { getDashboardDateRange } from '@/lib/dashboard-stats';
 import { applyInFilter, hasMultiValueFilters } from '@/lib/filter-helpers';
 
@@ -150,7 +150,7 @@ async function fetchMonthlyPlFallback(filters: ReportFilterParams): Promise<Mont
   tripQ = applyInFilter(tripQ, 'vehicle_number', filters.vehicles);
 
   let expQ = applyReportDateRange(
-    supabase.from('expenses').select('amount, expense_type, category, paid_by'),
+    supabase.from('expenses').select('amount, expense_type, category, paid_by').neq('category', EXPENSE_ADVANCE_CATEGORY),
     filters.dateFrom,
     filters.dateTo,
   );
@@ -230,6 +230,7 @@ async function fetchVehiclePlFallback(filters: ReportFilterParams): Promise<Vehi
       .from('expenses')
       .select('vehicle_number, amount')
       .eq('expense_type', 'vehicle')
+      .neq('category', EXPENSE_ADVANCE_CATEGORY)
       .not('vehicle_number', 'is', null),
     filters.dateFrom,
     filters.dateTo,
@@ -312,6 +313,7 @@ async function fetchDailyTripFallback(filters: ReportFilterParams): Promise<Dail
       .from('expenses')
       .select('date, vehicle_number, category, amount, description')
       .eq('expense_type', 'vehicle')
+      .neq('category', EXPENSE_ADVANCE_CATEGORY)
       .order('date'),
     filters.dateFrom,
     filters.dateTo,

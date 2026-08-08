@@ -60,7 +60,8 @@ BEGIN
          coalesce(sum(amount) FILTER (WHERE paid_by = 'Mahesh'), 0)
   INTO exp_count, exp_total, jm_total, mahesh_total
   FROM expenses e
-  WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+  WHERE e.category IS DISTINCT FROM 'Expense Advance'
+    AND (p_date_from IS NULL OR e.date >= p_date_from)
     AND (p_date_to IS NULL OR e.date <= p_date_to)
     AND (p_exp_paid_by IS NULL OR p_exp_paid_by = '' OR e.paid_by = p_exp_paid_by)
     AND (p_exp_paid_by_person IS NULL OR p_exp_paid_by_person = '' OR e.paid_by_person = p_exp_paid_by_person)
@@ -80,7 +81,7 @@ BEGIN
 
   SELECT coalesce(sum(value), 0) INTO capital_total FROM capital_contributions;
   SELECT coalesce(sum(total_revenue), 0) INTO cash_revenue FROM trips;
-  SELECT coalesce(sum(amount), 0) INTO cash_exp_revenue FROM expenses WHERE payment_source = 'Revenue';
+  SELECT coalesce(sum(amount), 0) INTO cash_exp_revenue FROM expenses WHERE payment_source = 'Revenue' AND category IS DISTINCT FROM 'Expense Advance';
   SELECT coalesce(sum(value), 0) INTO cash_cap_revenue
   FROM capital_contributions WHERE status = 'Paid' AND payment_source = 'Revenue';
 
@@ -115,7 +116,8 @@ BEGIN
       FROM (
         SELECT e.date, sum(e.amount) AS expenses
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_exp_paid_by IS NULL OR p_exp_paid_by = '' OR e.paid_by = p_exp_paid_by)
           AND (p_exp_paid_by_person IS NULL OR p_exp_paid_by_person = '' OR e.paid_by_person = p_exp_paid_by_person)
@@ -140,7 +142,8 @@ BEGIN
       FROM (
         SELECT e.category, sum(e.amount) AS total
         FROM expenses e
-        WHERE (p_date_from IS NULL OR e.date >= p_date_from)
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)
           AND (p_exp_paid_by IS NULL OR p_exp_paid_by = '' OR e.paid_by = p_exp_paid_by)
           AND (p_exp_paid_by_person IS NULL OR p_exp_paid_by_person = '' OR e.paid_by_person = p_exp_paid_by_person)
@@ -166,7 +169,8 @@ BEGIN
       FROM (
         SELECT e.vehicle_number, sum(e.amount) AS total
         FROM expenses e
-        WHERE e.expense_type = 'vehicle'
+        WHERE e.category IS DISTINCT FROM 'Expense Advance'
+          AND e.expense_type = 'vehicle'
           AND e.vehicle_number IS NOT NULL
           AND (p_date_from IS NULL OR e.date >= p_date_from)
           AND (p_date_to IS NULL OR e.date <= p_date_to)

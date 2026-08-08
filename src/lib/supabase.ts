@@ -61,6 +61,31 @@ export const DRIVER_PAY_CATEGORIES = {
   advance: 'Advance',
 } as const;
 
+/** Cash float for driver/partner spend; settled on /expense-advances */
+export const EXPENSE_ADVANCE_CATEGORY = 'Expense Advance' as const;
+/** @deprecated use EXPENSE_ADVANCE_CATEGORY */
+export const TRIP_ADVANCE_CATEGORY = EXPENSE_ADVANCE_CATEGORY;
+
+export const EXPENSE_ADVANCE_STATUSES = ['Open', 'Partial', 'Settled'] as const;
+export type ExpenseAdvanceStatus = (typeof EXPENSE_ADVANCE_STATUSES)[number];
+/** @deprecated use ExpenseAdvanceStatus */
+export type TripAdvanceStatus = ExpenseAdvanceStatus;
+
+export type ExpenseAdvance = {
+  id: number;
+  date: string;
+  person: string;
+  amount: number;
+  notes: string | null;
+  status: ExpenseAdvanceStatus;
+  source_expense_id: number | null;
+  created_at?: string;
+};
+/** @deprecated use ExpenseAdvance */
+export type TripAdvance = ExpenseAdvance;
+
+export const TRIP_ADVANCE_STATUSES = EXPENSE_ADVANCE_STATUSES;
+
 export const SALARY_CATEGORIES = ['Salary', 'Driver Salary'] as const;
 
 export type Partner = {
@@ -103,6 +128,7 @@ export type Expense = {
   status: string;
   payment_source: string | null;
   card_id: number | null;
+  expense_advance_id: number | null;
 };
 
 export type CreditCard = {

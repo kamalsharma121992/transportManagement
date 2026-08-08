@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { supabase, Expense, ExpenseType, EXPENSE_TYPES, JM_PARTNERS, PAYMENT_SOURCES } from '@/lib/supabase';
+import { supabase, Expense, ExpenseType, EXPENSE_TYPES, JM_PARTNERS, PAYMENT_SOURCES, EXPENSE_ADVANCE_CATEGORY } from '@/lib/supabase';
 import {
   buildAllCategoryNames,
   buildCategoriesByType,
@@ -18,6 +18,7 @@ import {
   formatCardOption,
   type CreditCard,
 } from '@/lib/credit-cards';
+import { createExpenseAdvanceFromExpense } from '@/lib/expense-advances';
 import { formatCurrency, formatDate, getMonthFilterOptions, getMonthDateRange, FILTER_SELECT_CLASS } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -79,6 +80,7 @@ const categoryColor: Record<string, string> = {
   'Rent': 'bg-orange-100 text-orange-800',
   'Daily Allowance': 'bg-teal-100 text-teal-800',
   'Advance': 'bg-red-100 text-red-800',
+  'Expense Advance': 'bg-orange-100 text-orange-800',
   'Credit Card Payment': 'bg-indigo-100 text-indigo-800',
 };
 
@@ -96,7 +98,7 @@ export default function ExpensesPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);
   const [allCategories, setAllCategories] = useState<string[]>(
-    buildAllCategoryNames(DEFAULT_CATEGORIES_BY_TYPE),
+    buildAllCategoryNames(DEFAULT_CATEGORIES_BY_TYPE).filter((c) => c !== EXPENSE_ADVANCE_CATEGORY),
   );
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [cardsTableMissing, setCardsTableMissing] = useState(false);
@@ -135,11 +137,14 @@ export default function ExpensesPage() {
   function applyExpenseFilters<Q>(query: Q): Q {
     let q = query as {
       eq: (col: string, val: string) => typeof q;
+      neq: (col: string, val: string) => typeof q;
       in: (col: string, vals: string[]) => typeof q;
       gte: (col: string, val: string) => typeof q;
       lte: (col: string, val: string) => typeof q;
       or: (filter: string) => typeof q;
     };
+    // Float only — tracked on Expense Advances page (avoid double-count in P&L)
+    q = q.neq('category', EXPENSE_ADVANCE_CATEGORY);
     if (filterType) q = q.eq('expense_type', filterType);
     q = applyInFilter(q, 'vehicle_number', filterVehicles);
     q = applyInFilter(q, 'category', filterCategories);
@@ -263,7 +268,7 @@ export default function ExpensesPage() {
       if (error) toast.error('Failed to load categories: ' + error);
       const byType = buildCategoriesByType(data);
       setCategoriesByType(byType);
-      setAllCategories(buildAllCategoryNames(byType));
+      setAllCategories(buildAllCategoryNames(byType).filter((c) => c !== EXPENSE_ADVANCE_CATEGORY));
     });
   }, []);
 
@@ -271,8 +276,13 @@ export default function ExpensesPage() {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
       setVehicles((data || []).map((v: { vehicle_number: string }) => v.vehicle_number));
     });
-    supabase.from('partners').select('name').order('name').then(({ data }) => {
-      setPartners((data || []).map((p: { name: string }) => p.name));
+    supabase.from('partners').select('name').order('name').then(({ data: partnerRows }) => {
+      supabase.from('drivers').select('name').order('name').then(({ data: driverRows }) => {
+        const names = new Set<string>();
+        (partnerRows || []).forEach((p: { name: string }) => names.add(p.name));
+        (driverRows || []).forEach((d: { name: string }) => names.add(d.name));
+        setPartners([...names].sort((a, b) => a.localeCompare(b)));
+      });
     });
   }, []);
 
@@ -304,6 +314,10 @@ export default function ExpensesPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (form.category === EXPENSE_ADVANCE_CATEGORY && !form.person.trim()) {
+      toast.error('Person is required for Expense Advance (who received the cash)');
+      return;
+    }
     const { payment_mode, card_details, credit_card_id, ...rest } = form;
     const cardId = credit_card_id ? Number(credit_card_id) : null;
     const selectedCard = creditCards.find((c) => c.id === cardId);
@@ -338,13 +352,38 @@ export default function ExpensesPage() {
       if (editingId) {
         const { error } = await supabase.from('expenses').update(payload).eq('id', editingId);
         if (error) { toast.error(error.message); return; }
+        if (form.category === EXPENSE_ADVANCE_CATEGORY) {
+          try {
+            await createExpenseAdvanceFromExpense({
+              id: editingId,
+              date: form.date,
+              amount: Number(form.amount),
+              person: form.person,
+              description: form.description || null,
+            });
+          } catch (syncErr) {
+            toast.error(syncErr instanceof Error ? syncErr.message : 'Expense saved but expense advance sync failed');
+          }
+        }
         toast.success('Expense updated');
       } else {
-        const { error } = await supabase.from('expenses').insert(payload);
+        const { data: inserted, error } = await supabase.from('expenses').insert(payload).select('id').single();
         if (error) { toast.error(error.message); return; }
 
-        // Auto-create capital contribution if paid by partner
-        if (form.payment_source === 'Partner' && form.paid_by_person) {
+        if (form.category === EXPENSE_ADVANCE_CATEGORY && inserted?.id) {
+          try {
+            await createExpenseAdvanceFromExpense({
+              id: inserted.id,
+              date: form.date,
+              amount: Number(form.amount),
+              person: form.person,
+              description: form.description || null,
+            });
+            toast.success('Expense Advance added — track settlement under Expense Advances');
+          } catch (syncErr) {
+            toast.error(syncErr instanceof Error ? syncErr.message : 'Expense saved but expense advance sync failed');
+          }
+        } else if (form.payment_source === 'Partner' && form.paid_by_person) {
           const { error: ccErr } = await supabase.from('capital_contributions').insert({
             date: form.date,
             contributor: form.paid_by_person,
@@ -355,6 +394,7 @@ export default function ExpensesPage() {
             ...(useCard ? { card_id: cardId } : {}),
             status: 'Unpaid',
             paid_by: 'JM transport',
+            payment_source: null,
           });
           if (ccErr) toast.error('Expense saved but capital entry failed: ' + ccErr.message);
           else toast.success('Expense added + capital contribution recorded');
@@ -479,11 +519,22 @@ export default function ExpensesPage() {
                   </select>
                 </div>
                 <div>
-                  <Label>Given To</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.person} onChange={(e) => setForm({ ...form, person: e.target.value })}>
+                  <Label>
+                    Given To
+                    {form.category === EXPENSE_ADVANCE_CATEGORY && <span className="text-red-500"> *</span>}
+                  </Label>
+                  <select
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={form.person}
+                    onChange={(e) => setForm({ ...form, person: e.target.value })}
+                    required={form.category === EXPENSE_ADVANCE_CATEGORY}
+                  >
                     <option value="">Select</option>
                     {partners.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
+                  {form.category === EXPENSE_ADVANCE_CATEGORY && (
+                    <p className="text-[10px] text-gray-400 mt-1">Who received the cash — settle later under Expense Advances</p>
+                  )}
                 </div>
                 <div>
                   <Label>Status</Label>

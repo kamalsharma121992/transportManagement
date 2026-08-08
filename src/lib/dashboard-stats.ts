@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, EXPENSE_ADVANCE_CATEGORY } from '@/lib/supabase';
 import { getMonthDateRange } from '@/lib/format';
 import { applyInFilter, hasMultiValueFilters } from '@/lib/filter-helpers';
 import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS, TRIP_SEARCH_COLUMNS } from '@/lib/search';
@@ -145,11 +145,13 @@ function buildExpenseFilterQuery(filters: DashboardFilterParams) {
     gte: (col: string, val: string) => Q;
     lte: (col: string, val: string) => Q;
     eq: (col: string, val: string) => Q;
+    neq: (col: string, val: string) => Q;
     in: (col: string, vals: string[]) => Q;
     or: (filter: string) => Q;
     select: (cols: string, opts?: { count?: 'exact'; head?: boolean }) => Promise<{ count: number | null; data: unknown; error: { message: string } | null }>;
   };
   let q = supabase.from('expenses') as unknown as Q;
+  q = q.neq('category', EXPENSE_ADVANCE_CATEGORY);
   if (filters.dateFrom) q = q.gte('date', filters.dateFrom);
   if (filters.dateTo) q = q.lte('date', filters.dateTo);
   q = applyInFilter(q, 'paid_by', filters.expPaidBy);
@@ -182,7 +184,7 @@ async function fetchDashboardStatsFallback(
     buildExpenseFilterQuery(filters).select('date, amount, category, paid_by, expense_type, vehicle_number'),
     supabase.from('capital_contributions').select('value'),
     supabase.from('trips').select('total_revenue'),
-    supabase.from('expenses').select('amount, payment_source'),
+    supabase.from('expenses').select('amount, payment_source, category').neq('category', EXPENSE_ADVANCE_CATEGORY),
     supabase.from('capital_contributions').select('value, status, payment_source'),
   ]);
 
@@ -226,7 +228,7 @@ async function fetchDashboardStatsFallback(
 
   const allRevenue = (allTripRevenue || []).reduce((s, r) => s + num(r.total_revenue), 0);
   const allExpFromRevenue = (allExpRevenue || [])
-    .filter((r) => r.payment_source === 'Revenue')
+    .filter((r) => r.payment_source === 'Revenue' && r.category !== EXPENSE_ADVANCE_CATEGORY)
     .reduce((s, r) => s + num(r.amount), 0);
   const capPaidFromRevenue = (capPaidRows || [])
     .filter((r) => r.status === 'Paid' && r.payment_source === 'Revenue')
