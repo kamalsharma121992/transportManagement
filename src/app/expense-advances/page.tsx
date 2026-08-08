@@ -224,6 +224,80 @@ export default function ExpenseAdvancesPage() {
     }
   }
 
+  function renderStatus(row: ExpenseAdvanceRow) {
+    if (row.status === 'Settled') {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+          <CheckCircle2 className="h-3 w-3" /> Settled
+        </span>
+      );
+    }
+    if (row.status === 'Partial') {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
+          <Clock className="h-3 w-3" /> Partial
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600">
+        <Clock className="h-3 w-3" /> Open
+      </span>
+    );
+  }
+
+  function renderAgeBadge(row: ExpenseAdvanceRow) {
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span
+          className={cn(
+            'text-sm font-semibold',
+            row.alert === 'overdue' && 'text-red-700',
+            row.alert === 'warning' && 'text-amber-800',
+            row.alert === 'ok' && 'text-gray-600',
+          )}
+        >
+          {row.ageDays}d
+        </span>
+        {row.alert === 'warning' && (
+          <Badge className="bg-amber-500 text-white hover:bg-amber-500 border-0">
+            <AlertTriangle className="h-3 w-3 mr-1" /> Warning
+          </Badge>
+        )}
+        {row.alert === 'overdue' && (
+          <Badge className="bg-red-600 text-white hover:bg-red-600 border-0">
+            <AlertTriangle className="h-3 w-3 mr-1" /> Overdue
+          </Badge>
+        )}
+      </div>
+    );
+  }
+
+  function renderActions(row: ExpenseAdvanceRow, compact = false) {
+    return (
+      <div className={cn('flex items-center gap-1', compact ? 'w-full' : 'justify-end')}>
+        {row.status !== 'Settled' && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className={compact ? 'flex-1' : undefined}
+              onClick={() => openSettle(row)}
+            >
+              Settle
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => openEdit(row)} title="Edit">
+              <Pencil className="h-4 w-4" />
+            </Button>
+          </>
+        )}
+        <Button variant="ghost" size="icon" onClick={() => handleDelete(row)} title="Delete">
+          <Trash2 className="h-4 w-4 text-red-500" />
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -270,9 +344,9 @@ export default function ExpenseAdvancesPage() {
         </Card>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
         {([
-          ['open', 'Needs settlement'],
+          ['open', 'Open'],
           ['all', 'All'],
           ['settled', 'Settled'],
         ] as const).map(([key, label]) => (
@@ -281,7 +355,7 @@ export default function ExpenseAdvancesPage() {
             type="button"
             onClick={() => setFilter(key)}
             className={cn(
-              'px-3 py-1.5 rounded-md text-sm font-medium',
+              'shrink-0 px-3 py-1.5 rounded-md text-sm font-medium',
               filter === key ? 'bg-white shadow-sm text-gray-900 border' : 'text-gray-500',
             )}
           >
@@ -290,7 +364,68 @@ export default function ExpenseAdvancesPage() {
         ))}
       </div>
 
-      <Card>
+      {/* Mobile cards */}
+      <div className="md:hidden space-y-3">
+        {loading ? (
+          <Card>
+            <CardContent className="py-8 text-center text-gray-500">Loading...</CardContent>
+          </Card>
+        ) : visible.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-gray-500 text-sm">
+              No expense advances. Add one from Expenses with category Expense Advance.
+            </CardContent>
+          </Card>
+        ) : (
+          visible.map((row) => (
+            <Card
+              key={row.id}
+              className={cn(
+                'overflow-hidden',
+                row.alert === 'overdue' && 'border-red-400 bg-red-50',
+                row.alert === 'warning' && 'border-amber-400 bg-amber-50',
+              )}
+            >
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-900 truncate">{row.person}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{formatDate(row.date)}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    {renderStatus(row)}
+                    {renderAgeBadge(row)}
+                  </div>
+                </div>
+
+                {row.notes && (
+                  <p className="text-sm text-gray-600 line-clamp-2">{row.notes}</p>
+                )}
+
+                <div className="grid grid-cols-3 gap-2 rounded-md bg-white/70 border border-black/5 p-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-gray-500">Given</p>
+                    <p className="text-sm font-semibold mt-0.5">{formatCurrency(row.amount)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-gray-500">Settled</p>
+                    <p className="text-sm font-semibold text-green-700 mt-0.5">{formatCurrency(row.settled)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-gray-500">Left</p>
+                    <p className="text-sm font-semibold text-amber-700 mt-0.5">{formatCurrency(row.remaining)}</p>
+                  </div>
+                </div>
+
+                {renderActions(row, true)}
+              </CardContent>
+            </Card>
+          ))
+        )}
+      </div>
+
+      {/* Desktop table */}
+      <Card className="hidden md:block">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <Table>
@@ -337,60 +472,9 @@ export default function ExpenseAdvancesPage() {
                       <TableCell className="text-right whitespace-nowrap font-medium text-amber-700">
                         {formatCurrency(row.remaining)}
                       </TableCell>
-                      <TableCell>
-                        <span
-                          className={cn(
-                            'text-sm font-semibold',
-                            row.alert === 'overdue' && 'text-red-700',
-                            row.alert === 'warning' && 'text-amber-800',
-                            row.alert === 'ok' && 'text-gray-600',
-                          )}
-                        >
-                          {row.ageDays}d
-                        </span>
-                        {row.alert === 'warning' && (
-                          <Badge className="ml-2 bg-amber-500 text-white hover:bg-amber-500 border-0">
-                            <AlertTriangle className="h-3 w-3 mr-1" /> Warning
-                          </Badge>
-                        )}
-                        {row.alert === 'overdue' && (
-                          <Badge className="ml-2 bg-red-600 text-white hover:bg-red-600 border-0">
-                            <AlertTriangle className="h-3 w-3 mr-1" /> Overdue
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {row.status === 'Settled' ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
-                            <CheckCircle2 className="h-3 w-3" /> Settled
-                          </span>
-                        ) : row.status === 'Partial' ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
-                            <Clock className="h-3 w-3" /> Partial
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600">
-                            <Clock className="h-3 w-3" /> Open
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="inline-flex items-center gap-1">
-                          {row.status !== 'Settled' && (
-                            <>
-                              <Button size="sm" variant="outline" onClick={() => openSettle(row)}>
-                                Settle
-                              </Button>
-                              <Button variant="ghost" size="icon" onClick={() => openEdit(row)} title="Edit">
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            </>
-                          )}
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(row)} title="Delete">
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
-                        </div>
-                      </TableCell>
+                      <TableCell>{renderAgeBadge(row)}</TableCell>
+                      <TableCell>{renderStatus(row)}</TableCell>
+                      <TableCell className="text-right">{renderActions(row)}</TableCell>
                     </TableRow>
                   ))
                 )}
@@ -401,7 +485,7 @@ export default function ExpenseAdvancesPage() {
       </Card>
 
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
           <DialogHeader>
             <DialogTitle>Edit Expense Advance</DialogTitle>
           </DialogHeader>
@@ -466,7 +550,7 @@ export default function ExpenseAdvancesPage() {
       </Dialog>
 
       <Dialog open={!!settling} onOpenChange={(o) => !o && setSettling(null)}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
           <DialogHeader>
             <DialogTitle>Settle — {settling?.person}</DialogTitle>
           </DialogHeader>

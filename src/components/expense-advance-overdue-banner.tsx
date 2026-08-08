@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { AlertTriangle, X } from 'lucide-react';
 import { EXPENSE_ADVANCE_OVERDUE_DAYS } from '@/lib/constants';
 
+/** Banner only for overdue advances (not warnings). */
 export function ExpenseAdvanceOverdueBanner({
   overdueCount,
   onDismiss,

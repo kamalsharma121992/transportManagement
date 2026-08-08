@@ -32,9 +32,22 @@ const navItems = [
   { href: '/admin', label: 'Admin', icon: Settings },
 ];
 
-export function Sidebar({ overdueCount = 0 }: { overdueCount?: number }) {
+function formatBadgeCount(n: number) {
+  if (n > 99) return '99+';
+  return String(n);
+}
+
+export function Sidebar({
+  overdueCount = 0,
+  warningCount = 0,
+}: {
+  overdueCount?: number;
+  warningCount?: number;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const mobileBadgeCount = overdueCount > 0 ? overdueCount : warningCount;
+  const mobileBadgeIsOverdue = overdueCount > 0;
 
   return (
     <>
@@ -44,9 +57,14 @@ export function Sidebar({ overdueCount = 0 }: { overdueCount?: number }) {
         onClick={() => setOpen(!open)}
       >
         {open ? <X size={20} /> : <Menu size={20} />}
-        {overdueCount > 0 && !open && (
-          <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
-            {overdueCount > 9 ? '9+' : overdueCount}
+        {mobileBadgeCount > 0 && !open && (
+          <span
+            className={cn(
+              'absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white',
+              mobileBadgeIsOverdue ? 'bg-red-600' : 'bg-amber-500',
+            )}
+          >
+            {mobileBadgeCount > 9 ? '9+' : mobileBadgeCount}
           </span>
         )}
       </button>
@@ -75,8 +93,9 @@ export function Sidebar({ overdueCount = 0 }: { overdueCount?: number }) {
             const isActive =
               pathname === item.href ||
               (item.href !== '/' && pathname.startsWith(item.href));
-            const showOverdueBadge =
-              item.href === '/expense-advances' && overdueCount > 0;
+            const isAdvances = item.href === '/expense-advances';
+            const showOverdue = isAdvances && overdueCount > 0;
+            const showWarning = isAdvances && warningCount > 0;
             return (
               <Link
                 key={item.href}
@@ -87,14 +106,24 @@ export function Sidebar({ overdueCount = 0 }: { overdueCount?: number }) {
                   isActive
                     ? 'bg-blue-50 text-blue-700'
                     : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-                  showOverdueBadge && !isActive && 'bg-red-50 text-red-800 hover:bg-red-100',
+                  showOverdue && !isActive && 'bg-red-50 text-red-800 hover:bg-red-100',
+                  !showOverdue && showWarning && !isActive && 'bg-amber-50 text-amber-900 hover:bg-amber-100',
                 )}
               >
                 <item.icon size={18} />
                 <span className="flex-1">{item.label}</span>
-                {showOverdueBadge && (
-                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white">
-                    {overdueCount > 99 ? '99+' : overdueCount}
+                {(showOverdue || showWarning) && (
+                  <span className="inline-flex items-center gap-1">
+                    {showWarning && (
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-bold text-white">
+                        {formatBadgeCount(warningCount)}
+                      </span>
+                    )}
+                    {showOverdue && (
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white">
+                        {formatBadgeCount(overdueCount)}
+                      </span>
+                    )}
                   </span>
                 )}
               </Link>

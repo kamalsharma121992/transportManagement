@@ -13,9 +13,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPublic = PUBLIC_ROUTES.some(r => pathname.startsWith(r));
   const [overdueCount, setOverdueCount] = useState(0);
+  const [warningCount, setWarningCount] = useState(0);
   const [bannerDismissed, setBannerDismissed] = useState(false);
-  const onOverdue = useCallback((count: number) => {
-    setOverdueCount(count);
+  const onAlerts = useCallback((counts: { overdue: number; warning: number }) => {
+    setOverdueCount(counts.overdue);
+    setWarningCount(counts.warning);
   }, []);
 
   if (isPublic) {
@@ -24,8 +26,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthGate>
-      <ExpenseAdvanceOverdueNotifier onOverdue={onOverdue} />
-      <Sidebar overdueCount={overdueCount} />
+      <ExpenseAdvanceOverdueNotifier onAlerts={onAlerts} />
+      <Sidebar overdueCount={overdueCount} warningCount={warningCount} />
       <main className="md:ml-64 min-h-full p-4 md:p-8 pt-16 md:pt-8">
         {!bannerDismissed && (
           <ExpenseAdvanceOverdueBanner
