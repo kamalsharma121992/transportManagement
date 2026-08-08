@@ -43,6 +43,31 @@ export function getExpenseAdvanceAlert(ageDays: number, status: ExpenseAdvanceSt
   return 'ok';
 }
 
+/** Lightweight counts for nav badge / toast (open advances only). */
+export async function fetchOpenExpenseAdvanceAlertCounts(): Promise<{
+  overdue: number;
+  warning: number;
+}> {
+  const { data, error } = await supabase
+    .from('expense_advances')
+    .select('date, status')
+    .neq('status', 'Settled');
+
+  if (error) throw error;
+
+  let overdue = 0;
+  let warning = 0;
+  for (const row of data || []) {
+    const alert = getExpenseAdvanceAlert(
+      daysBetween(row.date),
+      row.status as ExpenseAdvanceStatus,
+    );
+    if (alert === 'overdue') overdue += 1;
+    else if (alert === 'warning') warning += 1;
+  }
+  return { overdue, warning };
+}
+
 export function deriveExpenseAdvanceStatus(amount: number, settled: number): ExpenseAdvanceStatus {
   if (settled <= 0) return 'Open';
   if (settled + 0.001 >= amount) return 'Settled';

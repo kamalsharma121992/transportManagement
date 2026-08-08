@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
@@ -18,7 +19,6 @@ import {
   X,
 } from 'lucide-react';
 import { logout } from '@/components/auth-gate';
-import { useState } from 'react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -32,7 +32,7 @@ const navItems = [
   { href: '/admin', label: 'Admin', icon: Settings },
 ];
 
-export function Sidebar() {
+export function Sidebar({ overdueCount = 0 }: { overdueCount?: number }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -44,6 +44,11 @@ export function Sidebar() {
         onClick={() => setOpen(!open)}
       >
         {open ? <X size={20} /> : <Menu size={20} />}
+        {overdueCount > 0 && !open && (
+          <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
+            {overdueCount > 9 ? '9+' : overdueCount}
+          </span>
+        )}
       </button>
 
       {/* Overlay */}
@@ -70,6 +75,8 @@ export function Sidebar() {
             const isActive =
               pathname === item.href ||
               (item.href !== '/' && pathname.startsWith(item.href));
+            const showOverdueBadge =
+              item.href === '/expense-advances' && overdueCount > 0;
             return (
               <Link
                 key={item.href}
@@ -79,11 +86,17 @@ export function Sidebar() {
                   'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
                   isActive
                     ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+                  showOverdueBadge && !isActive && 'bg-red-50 text-red-800 hover:bg-red-100',
                 )}
               >
                 <item.icon size={18} />
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {showOverdueBadge && (
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white">
+                    {overdueCount > 99 ? '99+' : overdueCount}
+                  </span>
+                )}
               </Link>
             );
           })}
