@@ -97,6 +97,7 @@ export default function ExpensesPage() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [showFilters, setShowFilters] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);
   const [allCategories, setAllCategories] = useState<string[]>(
@@ -607,8 +608,33 @@ export default function ExpensesPage() {
         clearLabel="Reset filters"
       />
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {/* Summary: collapsible Total-only on mobile; full 3 cards on desktop */}
+      <div className="md:hidden space-y-2">
+        <button
+          type="button"
+          onClick={() => setShowSummary((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border bg-white px-3 py-2.5 text-left shadow-sm"
+        >
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Summary</p>
+            <p className="text-sm font-semibold text-gray-900 truncate">
+              Total {formatCurrency(summary.total)}
+            </p>
+          </div>
+          {showSummary ? <ChevronUp className="h-4 w-4 shrink-0 text-gray-500" /> : <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />}
+        </button>
+        {showSummary && (
+          <Card>
+            <CardContent className="py-3 px-4">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Total</p>
+              <p className="text-2xl font-bold text-gray-900">{formatCurrency(summary.total)}</p>
+              <p className="text-xs text-gray-400">{expenses.length} records</p>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      <div className="hidden md:grid grid-cols-3 gap-3">
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Total</p>

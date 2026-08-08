@@ -41,7 +41,7 @@ import Link from 'next/link';
 
 type FilterTab = 'open' | 'all' | 'settled';
 
-const FLOAT_CATEGORIES = new Set([EXPENSE_ADVANCE_CATEGORY]);
+const FLOAT_CATEGORIES = new Set<string>([EXPENSE_ADVANCE_CATEGORY]);
 
 const emptyLine = (): ExpenseAdvanceSettlementLine => ({
   expense_type: 'vehicle',
