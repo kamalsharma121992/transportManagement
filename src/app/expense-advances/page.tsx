@@ -7,7 +7,7 @@ import {
   DEFAULT_CATEGORIES_BY_TYPE,
   fetchExpenseCategories,
 } from '@/lib/expense-categories';
-import { formatCurrency, formatDate } from '@/lib/format';
+import { formatCurrency, formatDate, getMonthFilterOptions, getMonthDateRange, FILTER_SELECT_CLASS } from '@/lib/format';
 import {
   fetchSettlementLines,
   fetchExpenseAdvances,
@@ -34,7 +34,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { AlertTriangle, CheckCircle2, Clock, Pencil, Plus, Trash2 } from 'lucide-react';
+import { MultiSelectFilter } from '@/components/multi-select-filter';
+import { formatMultiFilterLabel } from '@/lib/filter-helpers';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Clock, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
@@ -58,10 +61,20 @@ type EditForm = {
   notes: string;
 };
 
+type AlertFilter = 'warning' | 'overdue';
+
 export default function ExpenseAdvancesPage() {
   const [rows, setRows] = useState<ExpenseAdvanceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterTab>('open');
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterPersons, setFilterPersons] = useState<string[]>([]);
+  const [filterAlerts, setFilterAlerts] = useState<AlertFilter[]>([]);
+  const [filterMonth, setFilterMonth] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const searchQuery = useDebouncedValue(searchInput);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [partners, setPartners] = useState<string[]>([]);
   const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);
@@ -104,21 +117,88 @@ export default function ExpenseAdvancesPage() {
     }).catch(() => {});
   }, []);
 
+  const filtered = useMemo(() => {
+    let list = rows;
+
+    if (filterPersons.length > 0) {
+      list = list.filter((r) => filterPersons.includes(r.person));
+    }
+    if (filterMonth) {
+      const { from, to } = getMonthDateRange(filterMonth);
+      list = list.filter((r) => r.date >= from && r.date <= to);
+    } else {
+      if (filterDateFrom) list = list.filter((r) => r.date >= filterDateFrom);
+      if (filterDateTo) list = list.filter((r) => r.date <= filterDateTo);
+    }
+    if (filterAlerts.length > 0) {
+      list = list.filter((r) => filterAlerts.includes(r.alert as AlertFilter));
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(
+        (r) =>
+          r.person.toLowerCase().includes(q)
+          || (r.notes || '').toLowerCase().includes(q)
+          || String(r.amount).includes(q)
+          || String(r.remaining).includes(q),
+      );
+    }
+
+    return list;
+  }, [rows, filterPersons, filterMonth, filterDateFrom, filterDateTo, filterAlerts, searchQuery]);
+
   const visible = useMemo(() => {
-    if (filter === 'open') return rows.filter((r) => r.status !== 'Settled');
-    if (filter === 'settled') return rows.filter((r) => r.status === 'Settled');
-    return rows;
-  }, [rows, filter]);
+    if (filter === 'open') return filtered.filter((r) => r.status !== 'Settled');
+    if (filter === 'settled') return filtered.filter((r) => r.status === 'Settled');
+    return filtered;
+  }, [filtered, filter]);
 
   const summary = useMemo(() => {
-    const open = rows.filter((r) => r.status !== 'Settled');
+    const open = filtered.filter((r) => r.status !== 'Settled');
     return {
       openCount: open.length,
       openAmount: open.reduce((s, r) => s + r.remaining, 0),
       warning: open.filter((r) => r.alert === 'warning').length,
       overdue: open.filter((r) => r.alert === 'overdue').length,
     };
-  }, [rows]);
+  }, [filtered]);
+
+  const hasActiveFilters =
+    filterPersons.length > 0
+    || filterAlerts.length > 0
+    || !!filterMonth
+    || !!filterDateFrom
+    || !!filterDateTo
+    || !!searchQuery.trim();
+
+  const activeFilterLabels: string[] = [];
+  if (filterMonth) {
+    const d = new Date(filterMonth + '-01');
+    activeFilterLabels.push(d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }));
+  }
+  if (filterDateFrom) activeFilterLabels.push('From: ' + filterDateFrom);
+  if (filterDateTo) activeFilterLabels.push('To: ' + filterDateTo);
+  if (filterPersons.length > 0) {
+    const label = formatMultiFilterLabel('Person', filterPersons);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterAlerts.length > 0) {
+    const label = formatMultiFilterLabel(
+      'Alert',
+      filterAlerts.map((a) => (a === 'warning' ? 'Warning' : 'Overdue')),
+    );
+    if (label) activeFilterLabels.push(label);
+  }
+  if (searchQuery.trim()) activeFilterLabels.push(`Search: ${searchQuery.trim()}`);
+
+  function clearFilters() {
+    setFilterPersons([]);
+    setFilterAlerts([]);
+    setFilterMonth('');
+    setFilterDateFrom('');
+    setFilterDateTo('');
+    setSearchInput('');
+  }
 
   async function openSettle(row: ExpenseAdvanceRow) {
     setSettling(row);
@@ -302,9 +382,17 @@ export default function ExpenseAdvancesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Expense Advances"
+        search={{
+          value: searchInput,
+          onChange: setSearchInput,
+          placeholder: 'Search person, note, amount...',
+        }}
+        hasActiveFilters={hasActiveFilters}
+        onClearFilters={clearFilters}
+        filterLabels={activeFilterLabels}
         actions={
           <Link
-            href="/expenses"
+            href="/expenses?add=1"
             className="inline-flex items-center justify-center rounded-lg text-sm font-medium bg-blue-600 text-white h-9 px-4 hover:bg-blue-700"
           >
             <Plus className="h-4 w-4 mr-1" /> Add via Expenses
@@ -312,7 +400,7 @@ export default function ExpenseAdvancesPage() {
         }
       />
 
-      <p className="text-sm text-gray-500 -mt-4">
+      <p className="text-sm text-gray-500 -mt-2">
         Issue a float from Expenses using category <span className="font-medium text-gray-700">{EXPENSE_ADVANCE_CATEGORY}</span>
         {' '}(driver or partner), then settle the breakup here. Warning after {EXPENSE_ADVANCE_WARNING_DAYS} days; overdue after {EXPENSE_ADVANCE_OVERDUE_DAYS} days.
       </p>
@@ -362,6 +450,98 @@ export default function ExpenseAdvancesPage() {
             {label}
           </button>
         ))}
+      </div>
+
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={() => setShowFilters(!showFilters)}
+          className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900 font-medium"
+        >
+          {showFilters ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          Advanced Filters
+          {hasActiveFilters && (
+            <span className="ml-1 bg-blue-600 text-white text-xs rounded-full px-1.5 py-0.5">Active</span>
+          )}
+        </button>
+
+        {showFilters && (
+          <Card>
+            <CardContent className="py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Month</label>
+                  <select
+                    className={FILTER_SELECT_CLASS}
+                    value={filterMonth}
+                    onChange={(e) => {
+                      setFilterMonth(e.target.value);
+                      setFilterDateFrom('');
+                      setFilterDateTo('');
+                    }}
+                  >
+                    {getMonthFilterOptions().map((opt) => (
+                      <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Date From</label>
+                  <Input
+                    className="min-w-0"
+                    type="date"
+                    value={filterDateFrom}
+                    onChange={(e) => {
+                      setFilterDateFrom(e.target.value);
+                      setFilterMonth('');
+                    }}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <label className="text-xs text-gray-500 mb-1 block">Date To</label>
+                  <Input
+                    className="min-w-0"
+                    type="date"
+                    value={filterDateTo}
+                    onChange={(e) => {
+                      setFilterDateTo(e.target.value);
+                      setFilterMonth('');
+                    }}
+                  />
+                </div>
+                <MultiSelectFilter
+                  label="Person"
+                  options={partners}
+                  selected={filterPersons}
+                  onChange={setFilterPersons}
+                  placeholder="All people"
+                  searchPlaceholder="Search person..."
+                />
+                <MultiSelectFilter
+                  label="Alert"
+                  options={['Warning', 'Overdue']}
+                  selected={filterAlerts.map((a) => (a === 'warning' ? 'Warning' : 'Overdue'))}
+                  onChange={(selected) => {
+                    setFilterAlerts(
+                      selected.map((s) => (s === 'Warning' ? 'warning' : 'overdue')),
+                    );
+                  }}
+                  placeholder="All alerts"
+                  searchPlaceholder="Search alert..."
+                />
+              </div>
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="mt-3 flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium"
+                >
+                  <X className="h-3 w-3" /> Clear all filters
+                </button>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Mobile cards */}
