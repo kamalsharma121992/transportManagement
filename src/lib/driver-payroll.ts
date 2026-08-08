@@ -72,6 +72,69 @@ export function computePayrollTotals(
   return { salaryForMonth, gross, balance };
 }
 
+function inclusiveDayCount(from: string, to: string): number {
+  if (from > to) return 0;
+  const a = new Date(from + 'T12:00:00');
+  const b = new Date(to + 'T12:00:00');
+  return Math.floor((b.getTime() - a.getTime()) / 86400000) + 1;
+}
+
+/**
+ * Full & final if the driver leaves on the payroll "as of" date (today in current month).
+ * Salary is prorated by calendar days in the month through that date; allowance uses
+ * already-computed as-of-today due; advances reduce what you still owe.
+ */
+export function computeIfLeavesTodayPay(
+  row: Pick<
+    MonthlyPayrollRow,
+    | 'periodStart'
+    | 'periodEnd'
+    | 'salaryDefault'
+    | 'salaryPaid'
+    | 'salaryLeaveDays'
+    | 'allowanceDue'
+    | 'allowancePaid'
+    | 'advancePaid'
+  >,
+  month: string,
+): {
+  total: number;
+  allowanceLeft: number;
+  salaryLeft: number;
+  advances: number;
+  salaryForExit: number;
+  asOf: string;
+  overpaid: number;
+} {
+  const asOf = getPayrollAsOfDate(month);
+  const { from, to } = getMonthBounds(month);
+  const monthDays = inclusiveDayCount(from, to);
+  const start = row.periodStart > from ? row.periodStart : from;
+  const end = asOf < row.periodEnd ? asOf : row.periodEnd;
+  const employedDays = inclusiveDayCount(start, end);
+
+  const dailySalary = monthDays > 0 ? row.salaryDefault / monthDays : 0;
+  let salaryForExit = Math.round(dailySalary * employedDays);
+  if (row.salaryLeaveDays > 0) {
+    salaryForExit = Math.max(0, salaryForExit - Math.round(dailySalary * row.salaryLeaveDays));
+  }
+
+  const allowanceLeft = Math.max(0, row.allowanceDue - row.allowancePaid);
+  const salaryLeft = Math.max(0, salaryForExit - row.salaryPaid);
+  const advances = row.advancePaid;
+  const raw = allowanceLeft + salaryLeft - advances;
+
+  return {
+    total: Math.max(0, raw),
+    allowanceLeft,
+    salaryLeft,
+    advances,
+    salaryForExit,
+    asOf,
+    overpaid: raw < 0 ? Math.abs(raw) : 0,
+  };
+}
+
 export function getMonthBounds(month: string): { from: string; to: string } {
   return getMonthDateRange(month);
 }
