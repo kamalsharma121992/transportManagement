@@ -1,4 +1,4 @@
-import { supabase, type Driver, DRIVER_PAY_CATEGORIES, SALARY_CATEGORIES } from '@/lib/supabase';
+import { supabase, type Driver, type Expense, DRIVER_PAY_CATEGORIES, SALARY_CATEGORIES } from '@/lib/supabase';
 import { getMonthDateRange } from '@/lib/format';
 
 export type DriverLeaveEntry = {
@@ -9,6 +9,15 @@ export type DriverLeaveEntry = {
 export type DriverLeaveByDriver = {
   leaveDates: Set<string>;
   salaryDeductDates: Set<string>;
+};
+
+export type PayrollPayLine = {
+  id: number;
+  date: string;
+  kind: 'advance' | 'allowance' | 'salary';
+  amount: number;
+  note: string;
+  description: string | null;
 };
 
 export type MonthlyPayrollRow = {
@@ -29,6 +38,7 @@ export type MonthlyPayrollRow = {
   dailyRate: number;
   gross: number;
   balance: number;
+  payLines: PayrollPayLine[];
 };
 
 export type DriverPayrollPeriod = {
@@ -80,9 +90,8 @@ function inclusiveDayCount(from: string, to: string): number {
 }
 
 /**
- * Full & final if the driver leaves on the payroll "as of" date (today in current month).
- * Salary is prorated by calendar days in the month through that date; allowance uses
- * already-computed as-of-today due; advances reduce what you still owe.
+ * Full & final as of today (current month) or period end (past months).
+ * ₹ monthly salary belongs to the selected period (start→end), not the calendar month.
  */
 export function computeIfLeavesTodayPay(
   row: Pick<
@@ -105,15 +114,17 @@ export function computeIfLeavesTodayPay(
   salaryForExit: number;
   asOf: string;
   overpaid: number;
+  periodDays: number;
+  employedDays: number;
 } {
   const asOf = getPayrollAsOfDate(month);
-  const { from, to } = getMonthBounds(month);
-  const monthDays = inclusiveDayCount(from, to);
-  const start = row.periodStart > from ? row.periodStart : from;
-  const end = asOf < row.periodEnd ? asOf : row.periodEnd;
+  const start = row.periodStart;
+  const periodEnd = row.periodEnd;
+  const end = asOf < periodEnd ? asOf : periodEnd;
+  const periodDays = inclusiveDayCount(start, periodEnd);
   const employedDays = inclusiveDayCount(start, end);
 
-  const dailySalary = monthDays > 0 ? row.salaryDefault / monthDays : 0;
+  const dailySalary = periodDays > 0 ? row.salaryDefault / periodDays : 0;
   let salaryForExit = Math.round(dailySalary * employedDays);
   if (row.salaryLeaveDays > 0) {
     salaryForExit = Math.max(0, salaryForExit - Math.round(dailySalary * row.salaryLeaveDays));
@@ -132,6 +143,8 @@ export function computeIfLeavesTodayPay(
     salaryForExit,
     asOf,
     overpaid: raw < 0 ? Math.abs(raw) : 0,
+    periodDays,
+    employedDays,
   };
 }
 
@@ -379,6 +392,172 @@ function hasDriverPayInMonth(
   );
 }
 
+type PayExpenseRow = {
+  id: number;
+  person: string | null;
+  category: string;
+  amount: number;
+  date: string;
+  description: string | null;
+};
+
+function addMonthsToDate(date: string, months: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const d = new Date(year, month - 1 + months, day);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function addDaysToDate(date: string, days: number): string {
+  const d = new Date(date + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return toYmd(d);
+}
+
+/** Same calendar day next month, clamped (31 Jan → 28 Feb). */
+function addCalendarMonthsClamped(date: string, months: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const monthIndex = month - 1 + months;
+  const y = year + Math.floor(monthIndex / 12);
+  const m = ((monthIndex % 12) + 12) % 12;
+  const lastDay = new Date(y, m + 1, 0).getDate();
+  return `${y}-${String(m + 1).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`;
+}
+
+/**
+ * Default cycle when none is saved. After a salary posted in a previous month,
+ * start the day after that salary. Join date still wins if the driver joined later.
+ * Not written to the DB — Set period remains the way to confirm or change dates.
+ */
+export function suggestPayrollPeriod(
+  driver: Driver,
+  month: string,
+  lastSalaryDate: string | null,
+): { start: string; end: string } {
+  const { from, to } = getMonthBounds(month);
+  const rollFromSalary = lastSalaryDate != null && lastSalaryDate < from;
+  let start = rollFromSalary ? addDaysToDate(lastSalaryDate, 1) : from;
+  if (driver.joined_date && driver.joined_date > start) start = driver.joined_date;
+  let end = rollFromSalary ? addCalendarMonthsClamped(start, 1) : to;
+  if (driver.left_date && driver.left_date < end) end = driver.left_date;
+  if (start > end) return { start: from, end: to };
+  return { start, end };
+}
+
+function lastSalaryByDriverBefore(rows: PayExpenseRow[], beforeDate: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const e of rows) {
+    if (!e.person || !isSalaryCategory(e.category) || e.date >= beforeDate) continue;
+    const prev = map.get(e.person);
+    if (!prev || e.date > prev) map.set(e.person, e.date);
+  }
+  return map;
+}
+
+function withSuggestedPeriods(
+  drivers: Driver[],
+  month: string,
+  saved: Map<string, DriverPayrollPeriod>,
+  lastSalary: Map<string, string>,
+): Map<string, DriverPayrollPeriod> {
+  const out = new Map(saved);
+  for (const driver of drivers) {
+    if (out.has(driver.name)) continue;
+    const { start, end } = suggestPayrollPeriod(driver, month, lastSalary.get(driver.name) ?? null);
+    out.set(driver.name, {
+      driver_name: driver.name,
+      month,
+      start_date: start,
+      end_date: end,
+    });
+  }
+  return out;
+}
+
+function isSalaryCategory(category: string): boolean {
+  return SALARY_CATEGORIES.includes(category as (typeof SALARY_CATEGORIES)[number]);
+}
+
+function driverCycleWindow(
+  driver: Driver,
+  month: string,
+  period?: DriverPayrollPeriod | null,
+): { start: string; end: string } {
+  const days = getEmploymentDaysInMonth(driver, month, period);
+  return {
+    start: days[0] ?? getDefaultPeriodStart(driver, month),
+    end: days[days.length - 1] ?? getDefaultPeriodEnd(driver, month),
+  };
+}
+
+/** Allowance/salary in this cycle only. Advances after the last prior salary, through cycle end. */
+function allocateDriverPay(
+  driver: Driver,
+  month: string,
+  period: DriverPayrollPeriod | null | undefined,
+  expenses: PayExpenseRow[],
+): { allowance: number; advance: number; salary: number; lines: PayrollPayLine[] } {
+  const { start, end } = driverCycleWindow(driver, month, period);
+  const rows = expenses.filter((e) => e.person === driver.name);
+  const lines: PayrollPayLine[] = [];
+  let allowance = 0;
+  let salary = 0;
+  let priorSalaryDate: string | null = null;
+
+  for (const e of rows) {
+    const amt = Number(e.amount) || 0;
+    if (isSalaryCategory(e.category)) {
+      if (e.date >= start && e.date <= end) {
+        salary += amt;
+        lines.push({
+          id: e.id,
+          date: e.date,
+          kind: 'salary',
+          amount: amt,
+          note: 'In this period',
+          description: e.description,
+        });
+      }
+      if (e.date < start && (!priorSalaryDate || e.date > priorSalaryDate)) priorSalaryDate = e.date;
+    } else if (e.category === DRIVER_PAY_CATEGORIES.allowance) {
+      if (e.date >= start && e.date <= end) {
+        allowance += amt;
+        lines.push({
+          id: e.id,
+          date: e.date,
+          kind: 'allowance',
+          amount: amt,
+          note: 'In this period',
+          description: e.description,
+        });
+      }
+    }
+  }
+
+  let advance = 0;
+  for (const e of rows) {
+    if (e.category !== DRIVER_PAY_CATEGORIES.advance) continue;
+    if (e.date > end) continue;
+    if (priorSalaryDate && e.date <= priorSalaryDate) continue;
+    const amt = Number(e.amount) || 0;
+    advance += amt;
+    lines.push({
+      id: e.id,
+      date: e.date,
+      kind: 'advance',
+      amount: amt,
+      note: e.date < start ? 'Before start — held until salary' : 'In this period',
+      description: e.description,
+    });
+  }
+
+  lines.sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind));
+  return { allowance, advance, salary, lines };
+}
+
 function buildPayrollRows(
   drivers: Driver[],
   month: string,
@@ -387,6 +566,7 @@ function buildPayrollRows(
   allowanceByDriver: Map<string, number>,
   advanceByDriver: Map<string, number>,
   salaryByDriver: Map<string, number>,
+  payLinesByDriver: Map<string, PayrollPayLine[]>,
 ): MonthlyPayrollRow[] {
   return drivers.map((driver) => {
     const period = periodByDriver.get(driver.name) ?? null;
@@ -435,43 +615,50 @@ function buildPayrollRows(
       dailyRate,
       gross,
       balance,
+      payLines: payLinesByDriver.get(driver.name) ?? [],
     };
   });
 }
 
-async function fetchPayExpenseMaps(
+async function fetchPayExpenseRows(
   month: string,
   periods?: Map<string, DriverPayrollPeriod> | null,
-) {
+): Promise<PayExpenseRow[]> {
   const { from, to } = payrollQueryRange(month, periods);
+  const lookbackFrom = addMonthsToDate(from, -12);
   const { data: expenses } = await supabase
     .from('expenses')
-    .select('person, category, amount, date')
-    .gte('date', from)
-    .lte('date', to)
+    .select('id, person, category, amount, date, description')
+    .gte('date', lookbackFrom)
+    .lte('date', addCalendarMonthsClamped(to, 1))
     .in('category', [
       DRIVER_PAY_CATEGORIES.allowance,
       DRIVER_PAY_CATEGORIES.advance,
       ...SALARY_CATEGORIES,
     ]);
+  return (expenses || []) as PayExpenseRow[];
+}
 
+function allocatePayMaps(
+  month: string,
+  drivers: Driver[],
+  periods: Map<string, DriverPayrollPeriod> | null | undefined,
+  rows: PayExpenseRow[],
+) {
   const allowanceByDriver = new Map<string, number>();
   const advanceByDriver = new Map<string, number>();
   const salaryByDriver = new Map<string, number>();
+  const payLinesByDriver = new Map<string, PayrollPayLine[]>();
 
-  for (const e of expenses || []) {
-    if (!e.person) continue;
-    const amt = Number(e.amount);
-    if (e.category === DRIVER_PAY_CATEGORIES.allowance) {
-      allowanceByDriver.set(e.person, (allowanceByDriver.get(e.person) || 0) + amt);
-    } else if (e.category === DRIVER_PAY_CATEGORIES.advance) {
-      advanceByDriver.set(e.person, (advanceByDriver.get(e.person) || 0) + amt);
-    } else if (SALARY_CATEGORIES.includes(e.category as (typeof SALARY_CATEGORIES)[number])) {
-      salaryByDriver.set(e.person, (salaryByDriver.get(e.person) || 0) + amt);
-    }
+  for (const driver of drivers) {
+    const allocated = allocateDriverPay(driver, month, periods?.get(driver.name), rows);
+    allowanceByDriver.set(driver.name, allocated.allowance);
+    advanceByDriver.set(driver.name, allocated.advance);
+    salaryByDriver.set(driver.name, allocated.salary);
+    payLinesByDriver.set(driver.name, allocated.lines);
   }
 
-  return { allowanceByDriver, advanceByDriver, salaryByDriver };
+  return { allowanceByDriver, advanceByDriver, salaryByDriver, payLinesByDriver };
 }
 
 export async function fetchInactiveDrivers(): Promise<Driver[]> {
@@ -488,14 +675,26 @@ export function getSuggestedPayrollMonth(driver: Driver): string | null {
 
 export async function fetchMonthlyPayroll(month: string): Promise<MonthlyPayrollRow[]> {
   const allDrivers = await fetchDrivers();
-  const periodByDriver = await fetchPayrollPeriods(month);
+  const savedPeriods = await fetchPayrollPeriods(month);
+  const expenseRows = await fetchPayExpenseRows(month, savedPeriods);
+  const periodByDriver = withSuggestedPeriods(
+    allDrivers,
+    month,
+    savedPeriods,
+    lastSalaryByDriverBefore(expenseRows, getMonthBounds(month).from),
+  );
   const drivers = allDrivers.filter(
     (d) =>
       d.status === 'active'
       && isDriverActiveInMonth(d, month, periodByDriver.get(d.name)),
   );
   const leaveByDriver = await fetchLeaveForMonth(month, periodByDriver);
-  const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month, periodByDriver);
+  const { allowanceByDriver, advanceByDriver, salaryByDriver, payLinesByDriver } = allocatePayMaps(
+    month,
+    drivers,
+    periodByDriver,
+    expenseRows,
+  );
 
   return buildPayrollRows(
     drivers,
@@ -505,17 +704,30 @@ export async function fetchMonthlyPayroll(month: string): Promise<MonthlyPayroll
     allowanceByDriver,
     advanceByDriver,
     salaryByDriver,
+    payLinesByDriver,
   );
 }
 
 export async function fetchInactivePayroll(month: string): Promise<MonthlyPayrollRow[]> {
   const allDrivers = await fetchDrivers();
-  const periodByDriver = await fetchPayrollPeriods(month);
+  const savedPeriods = await fetchPayrollPeriods(month);
+  const candidates = allDrivers.filter((d) => d.status === 'inactive');
+  const expenseRows = await fetchPayExpenseRows(month, savedPeriods);
+  const periodByDriver = withSuggestedPeriods(
+    candidates,
+    month,
+    savedPeriods,
+    lastSalaryByDriverBefore(expenseRows, getMonthBounds(month).from),
+  );
   const leaveByDriver = await fetchLeaveForMonth(month, periodByDriver);
-  const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month, periodByDriver);
+  const { allowanceByDriver, advanceByDriver, salaryByDriver, payLinesByDriver } = allocatePayMaps(
+    month,
+    candidates,
+    periodByDriver,
+    expenseRows,
+  );
 
-  const drivers = allDrivers.filter((d) => {
-    if (d.status !== 'inactive') return false;
+  const drivers = candidates.filter((d) => {
     const period = periodByDriver.get(d.name);
     return (
       isDriverActiveInMonth(d, month, period)
@@ -531,7 +743,19 @@ export async function fetchInactivePayroll(month: string): Promise<MonthlyPayrol
     allowanceByDriver,
     advanceByDriver,
     salaryByDriver,
+    payLinesByDriver,
   );
+}
+
+export async function fetchPayLineExpenses(ids: number[]): Promise<Expense[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase
+    .from('expenses')
+    .select('*')
+    .in('id', ids);
+  if (error) throw error;
+  const byId = new Map((data || []).map((e) => [e.id as number, e as Expense]));
+  return ids.map((id) => byId.get(id)).filter((e): e is Expense => e != null);
 }
 
 export async function postDriverExpense(params: {
@@ -574,10 +798,15 @@ export async function postDailyAllowance(
   });
 }
 
-export async function postSalary(driver: Driver, month: string, amount: number): Promise<void> {
-  const { to } = getMonthBounds(month);
+export async function postSalary(
+  driver: Driver,
+  month: string,
+  amount: number,
+  periodEnd?: string,
+): Promise<void> {
+  const payDate = periodEnd ?? getMonthBounds(month).to;
   await postDriverExpense({
-    date: to,
+    date: payDate,
     driverName: driver.name,
     category: DRIVER_PAY_CATEGORIES.salary,
     amount,

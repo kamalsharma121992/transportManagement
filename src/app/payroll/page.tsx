@@ -5,6 +5,7 @@ import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS 
 import {
   computeIfLeavesTodayPay,
   computePayrollTotals,
+  fetchPayLineExpenses,
   fetchInactiveDrivers,
   fetchInactivePayroll,
   fetchMonthlyPayroll,
@@ -21,7 +22,8 @@ import {
   setPayrollPeriod,
   type MonthlyPayrollRow,
 } from '@/lib/driver-payroll';
-import type { Driver } from '@/lib/supabase';
+import { printSalarySlip } from '@/lib/salary-slip';
+import type { Driver, Expense } from '@/lib/supabase';
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,7 +32,7 @@ import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Check, ChevronDown, ChevronUp, Plus } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, FileDown, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
@@ -38,6 +40,22 @@ import { supabase } from '@/lib/supabase';
 type Tab = 'active' | 'inactive';
 
 type DisplayRow = MonthlyPayrollRow & { gross: number; balance: number };
+
+const EXPENSE_TYPE_COLORS: Record<string, string> = {
+  vehicle: 'bg-blue-100 text-blue-800',
+  operational: 'bg-green-100 text-green-800',
+  personal: 'bg-purple-100 text-purple-800',
+  other: 'bg-gray-100 text-gray-800',
+};
+
+const EXPENSE_CATEGORY_COLORS: Record<string, string> = {
+  'Fuel (Diesel)': 'bg-amber-100 text-amber-800',
+  Maintenance: 'bg-blue-100 text-blue-800',
+  'Daily Allowance': 'bg-teal-100 text-teal-800',
+  Advance: 'bg-red-100 text-red-800',
+  Salary: 'bg-indigo-100 text-indigo-800',
+  'Driver Salary': 'bg-indigo-100 text-indigo-800',
+};
 
 function getPayStatus(row: DisplayRow): { label: string; className: string } {
   const needsAllowance = row.allowanceShortfall > 0.01;
@@ -64,6 +82,11 @@ export default function PayrollPage() {
   const [salaryInputs, setSalaryInputs] = useState<Record<string, string>>({});
   const [showSummary, setShowSummary] = useState(false);
   const [expandedDriver, setExpandedDriver] = useState<string | null>(null);
+  const [expenseDialog, setExpenseDialog] = useState<{
+    row: MonthlyPayrollRow;
+    expenses: Expense[];
+    loading: boolean;
+  } | null>(null);
   const [allowanceDialog, setAllowanceDialog] = useState<{
     row: MonthlyPayrollRow;
     date: string;
@@ -127,6 +150,23 @@ export default function PayrollPage() {
     });
   }
 
+  async function openExpenseDialog(row: MonthlyPayrollRow) {
+    const name = row.driver.name;
+    const ids = row.payLines.map((line) => line.id);
+    setExpenseDialog({ row, expenses: [], loading: true });
+    try {
+      const expenses = await fetchPayLineExpenses(ids);
+      setExpenseDialog((prev) =>
+        prev?.row.driver.name === name ? { row, expenses, loading: false } : prev,
+      );
+    } catch {
+      setExpenseDialog((prev) =>
+        prev?.row.driver.name === name ? { row, expenses: [], loading: false } : prev,
+      );
+      toast.error('Failed to load expenses');
+    }
+  }
+
   function updateAllowanceDays(days: string, dailyRate: number) {
     const n = Math.max(1, Number(days) || 1);
     setAllowanceDialog((prev) =>
@@ -170,7 +210,7 @@ export default function PayrollPage() {
     const key = `salary-${row.driver.name}`;
     setPosting(key);
     try {
-      await postSalary(row.driver, selectedMonth, amount);
+      await postSalary(row.driver, selectedMonth, amount, row.periodEnd);
       toast.success(`Salary posted for ${row.driver.name}`);
       await load();
     } catch (e) {
@@ -357,6 +397,19 @@ export default function PayrollPage() {
     });
   }
 
+  function handleSalarySlip(row: MonthlyPayrollRow) {
+    try {
+      printSalarySlip({
+        row,
+        month: selectedMonth,
+        monthLabel,
+        generatedOn: today,
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not open salary slip');
+    }
+  }
+
   const monthLabel = getMonthFilterOptions().find((o) => o.value === selectedMonth)?.label
     ?? selectedMonth;
 
@@ -535,6 +588,9 @@ export default function PayrollPage() {
                 <div>
                   <p className="text-[10px] uppercase text-gray-500">Advances</p>
                   <p className="font-medium text-red-600">{formatCurrency(row.advancePaid)}</p>
+                  {row.advancePaid > 0 && row.salaryPaid <= 0 && (
+                    <p className="text-[10px] text-gray-400">Until salary is posted</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-[10px] uppercase text-gray-500">Balance</p>
@@ -580,6 +636,13 @@ export default function PayrollPage() {
               )}
 
               <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => openExpenseDialog(row)}>
+                  Salary details
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => handleSalarySlip(row)}>
+                  <FileDown className="h-3.5 w-3.5 mr-1" />
+                  Salary slip
+                </Button>
                 <Button size="sm" variant="outline" onClick={() => openLeaveDialog(row)}>
                   Mark leave
                 </Button>
@@ -866,7 +929,7 @@ export default function PayrollPage() {
           {periodDialog && (
             <div className="space-y-4">
               <p className="text-xs text-gray-500">
-                First and last working day for this cycle. Can start in the previous month or end in the next (e.g. 18 Jul–18 Aug). Allowance counts only between these dates.
+                First and last working day for this cycle. After a salary is posted, the next month starts the day after that salary — change the dates if the driver joined late.
               </p>
               <div>
                 <Label>Start date</Label>
@@ -891,6 +954,129 @@ export default function PayrollPage() {
               <Button className="w-full" disabled={posting === 'period'} onClick={handleSavePeriod}>
                 Save
               </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!expenseDialog} onOpenChange={(o) => !o && setExpenseDialog(null)}>
+        <DialogContent className="flex max-h-[85vh] w-[calc(100%-1.5rem)] max-w-lg flex-col overflow-hidden p-0 sm:max-w-lg">
+          <DialogHeader className="px-4 pt-4 pb-3 pr-12">
+            <DialogTitle>This cycle — {expenseDialog?.row.driver.name}</DialogTitle>
+            {expenseDialog && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-fit"
+                onClick={() => handleSalarySlip(expenseDialog.row)}
+              >
+                <FileDown className="h-3.5 w-3.5 mr-1" />
+                Salary slip PDF
+              </Button>
+            )}
+          </DialogHeader>
+          {expenseDialog && (
+            <div className="min-h-0 space-y-3 overflow-y-auto px-4 pb-4">
+              <div className="rounded-lg border bg-gray-50 p-3">
+                <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-2">Paid this cycle</p>
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-gray-600">Daily Allowance</span>
+                    <span className="font-medium tabular-nums">{formatCurrency(expenseDialog.row.allowancePaid)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-gray-600">+ Advance</span>
+                    <span className="font-medium tabular-nums">{formatCurrency(expenseDialog.row.advancePaid)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-gray-600">+ Salary</span>
+                    <span className="font-medium tabular-nums">{formatCurrency(expenseDialog.row.salaryPaid)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3 border-t pt-2 font-semibold">
+                    <span>Total paid</span>
+                    <span className="tabular-nums text-red-700">
+                      {formatCurrency(
+                        expenseDialog.row.allowancePaid
+                        + expenseDialog.row.advancePaid
+                        + expenseDialog.row.salaryPaid,
+                      )}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {expenseDialog.loading ? (
+                <p className="py-8 text-center text-sm text-gray-500">Loading expenses...</p>
+              ) : expenseDialog.expenses.length === 0 ? (
+                <p className="py-6 text-center text-sm text-gray-500">No allowance, advance, or salary in this cycle.</p>
+              ) : (
+                expenseDialog.expenses.map((exp) => {
+                  const counted = expenseDialog.row.payLines.find((line) => line.id === exp.id);
+                  return (
+                    <div key={exp.id} className="rounded-lg border bg-white p-3 space-y-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs text-gray-500">{formatDate(exp.date)}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <span className={cn(
+                              'px-2 py-0.5 rounded-full text-xs font-medium',
+                              EXPENSE_CATEGORY_COLORS[exp.category] || 'bg-gray-100 text-gray-800',
+                            )}>
+                              {exp.category}
+                            </span>
+                            <span className={cn(
+                              'px-2 py-0.5 rounded-full text-xs font-medium',
+                              EXPENSE_TYPE_COLORS[exp.expense_type] || 'bg-gray-100 text-gray-800',
+                            )}>
+                              {exp.expense_type}
+                            </span>
+                            {counted && (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-sky-100 text-sky-800">
+                                {counted.note}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <p className="shrink-0 text-sm font-bold text-red-600">{formatCurrency(Number(exp.amount))}</p>
+                      </div>
+                      {exp.description && (
+                        <p className="text-sm text-gray-700">{exp.description}</p>
+                      )}
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Entity</p>
+                          <p className="font-medium text-gray-800">
+                            {exp.paid_by === 'JM transport' ? 'JM' : exp.paid_by}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Paid by</p>
+                          <p className="font-medium text-gray-800">{exp.paid_by_person || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Paid from</p>
+                          <p className="font-medium text-gray-800">{exp.payment_source || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Status</p>
+                          <p className="font-medium text-gray-800">{exp.status || '—'}</p>
+                        </div>
+                        {exp.vehicle_number && (
+                          <div>
+                            <p className="text-[10px] uppercase text-gray-500">Vehicle</p>
+                            <p className="font-medium text-gray-800">{exp.vehicle_number}</p>
+                          </div>
+                        )}
+                        {exp.bill_receipt_ref && (
+                          <div className="col-span-2">
+                            <p className="text-[10px] uppercase text-gray-500">Bill / receipt</p>
+                            <p className="font-medium text-gray-800 break-all">{exp.bill_receipt_ref}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           )}
         </DialogContent>
