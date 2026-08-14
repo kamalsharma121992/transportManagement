@@ -675,6 +675,52 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.monthly_trend_report(
+  p_vehicle text DEFAULT NULL,
+  p_entity text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN coalesce((
+    SELECT jsonb_agg(jsonb_build_object(
+      'month', m.month,
+      'revenue', coalesce(r.revenue, 0),
+      'expenses', coalesce(x.expenses, 0)
+    ) ORDER BY m.month)
+    FROM (
+      SELECT date_trunc('month', d)::date AS month
+      FROM generate_series(
+        date_trunc('month', CURRENT_DATE) - interval '11 months',
+        date_trunc('month', CURRENT_DATE),
+        interval '1 month'
+      ) d
+    ) m
+    LEFT JOIN (
+      SELECT date_trunc('month', t.date)::date AS month, coalesce(sum(t.total_revenue), 0) AS revenue
+      FROM trips t
+      WHERE t.date >= (date_trunc('month', CURRENT_DATE) - interval '11 months')::date
+        AND (p_vehicle IS NULL OR p_vehicle = '' OR t.vehicle_number = p_vehicle)
+      GROUP BY 1
+    ) r ON r.month = m.month
+    LEFT JOIN (
+      SELECT date_trunc('month', e.date)::date AS month, coalesce(sum(e.amount), 0) AS expenses
+      FROM expenses e
+      WHERE e.category IS DISTINCT FROM 'Expense Advance'
+        AND e.date >= (date_trunc('month', CURRENT_DATE) - interval '11 months')::date
+        AND (p_vehicle IS NULL OR p_vehicle = '' OR e.vehicle_number = p_vehicle)
+        AND (p_entity IS NULL OR p_entity = '' OR e.paid_by = p_entity)
+      GROUP BY 1
+    ) x ON x.month = m.month
+  ), '[]'::jsonb);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.monthly_trend_report TO anon;
+GRANT EXECUTE ON FUNCTION public.monthly_trend_report TO authenticated;
 GRANT EXECUTE ON FUNCTION public.monthly_pl_report TO anon;
 GRANT EXECUTE ON FUNCTION public.monthly_pl_report TO authenticated;
 GRANT EXECUTE ON FUNCTION public.vehicle_pl_report TO anon;

@@ -8,9 +8,11 @@ import {
   downloadCsv,
   fetchDailyTripReport,
   fetchMonthlyPlReport,
+  fetchMonthlyTrendReport,
   fetchVehiclePlReport,
   type DailyTripDay,
   type MonthlyPlReport,
+  type MonthlyTrendRow,
   type VehiclePlRow,
 } from '@/lib/reports';
 import { PageHeader } from '@/components/page-header';
@@ -24,6 +26,16 @@ import {
 import { ChevronDown, ChevronRight, Download, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 
 type Tab = 'monthly' | 'vehicle' | 'daily';
 
@@ -53,6 +65,7 @@ export default function ReportsPage() {
   const hasLoadedRef = useRef(false);
 
   const [monthly, setMonthly] = useState<MonthlyPlReport>(emptyMonthly);
+  const [monthlyTrend, setMonthlyTrend] = useState<MonthlyTrendRow[]>([]);
   const [vehiclePl, setVehiclePl] = useState<VehiclePlRow[]>([]);
   const [daily, setDaily] = useState<DailyTripDay[]>([]);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
@@ -104,14 +117,16 @@ export default function ReportsPage() {
       const filters = buildReportFilters(filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterEntities);
 
       try {
-        const [m, v, d] = await Promise.all([
+        const [m, v, d, trend] = await Promise.all([
           fetchMonthlyPlReport(filters),
           fetchVehiclePlReport(filters),
           fetchDailyTripReport(filters),
+          fetchMonthlyTrendReport(filters),
         ]);
         setMonthly(m);
         setVehiclePl(v);
         setDaily(d);
+        setMonthlyTrend(trend);
         hasLoadedRef.current = true;
       } catch {
         toast.error('Failed to load reports');
@@ -302,6 +317,29 @@ export default function ReportsPage() {
           <>
             {/* Monthly P&L */}
             <div className={tab === 'monthly' ? 'space-y-6' : 'hidden'}>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Monthly Revenue vs Expenses</CardTitle>
+                    <p className="text-xs text-gray-500">Last 12 months · not affected by the month filter</p>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart data={monthlyTrend}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="label" fontSize={12} />
+                        <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} fontSize={12} />
+                        <Tooltip
+                          formatter={(value) => formatCurrency(Number(value))}
+                          labelFormatter={(label) => String(label)}
+                        />
+                        <Legend />
+                        <Bar dataKey="revenue" fill="#10b981" name="Revenue" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="expenses" fill="#ef4444" name="Expenses" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <SummaryCard title="Trips" value={String(monthly.tripCount)} />
                   <SummaryCard title="Revenue" value={formatCurrency(monthly.totalRevenue)} positive />

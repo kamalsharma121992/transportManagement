@@ -21,6 +21,13 @@ export type MonthlyPlReport = {
   expensesByEntity: { entity: string; amount: number }[];
 };
 
+export type MonthlyTrendRow = {
+  month: string;
+  label: string;
+  revenue: number;
+  expenses: number;
+};
+
 export type VehiclePlRow = {
   vehicle: string;
   tripCount: number;
@@ -139,6 +146,92 @@ export async function fetchMonthlyPlReport(filters: ReportFilterParams): Promise
   }
 
   return fetchMonthlyPlFallback(filters);
+}
+
+function monthKey(date: string): string {
+  return date.slice(0, 7);
+}
+
+function monthLabel(yyyyMm: string): string {
+  return new Date(`${yyyyMm}-01`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+}
+
+function last12MonthKeys(now = new Date()): string[] {
+  const keys: string[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return keys;
+}
+
+function fillTrendMonths(
+  rows: { month: string; revenue: number; expenses: number }[],
+): MonthlyTrendRow[] {
+  const map = new Map(rows.map((r) => [monthKey(r.month), r]));
+  return last12MonthKeys().map((key) => {
+    const row = map.get(key);
+    return {
+      month: key,
+      label: monthLabel(key),
+      revenue: num(row?.revenue),
+      expenses: num(row?.expenses),
+    };
+  }).filter((row, i, all) => {
+    const firstActive = all.findIndex((r) => r.revenue > 0 || r.expenses > 0);
+    return firstActive === -1 || i >= firstActive;
+  });
+}
+
+export async function fetchMonthlyTrendReport(filters: ReportFilterParams): Promise<MonthlyTrendRow[]> {
+  if (!useReportFallback(filters)) {
+    const { data, error } = await supabase.rpc('monthly_trend_report', {
+      p_vehicle: rpcVehicle(filters),
+      p_entity: rpcEntity(filters),
+    });
+    if (!error && Array.isArray(data)) {
+      return fillTrendMonths(
+        (data as { month: string; revenue: number; expenses: number }[]).map((r) => ({
+          month: r.month,
+          revenue: num(r.revenue),
+          expenses: num(r.expenses),
+        })),
+      );
+    }
+  }
+  return fetchMonthlyTrendFallback(filters);
+}
+
+async function fetchMonthlyTrendFallback(filters: ReportFilterParams): Promise<MonthlyTrendRow[]> {
+  const from = `${last12MonthKeys()[0]}-01`;
+  let tripQ = supabase.from('trips').select('date, total_revenue').gte('date', from);
+  tripQ = applyInFilter(tripQ, 'vehicle_number', filters.vehicles);
+
+  let expQ = supabase
+    .from('expenses')
+    .select('date, amount')
+    .neq('category', EXPENSE_ADVANCE_CATEGORY)
+    .gte('date', from);
+  expQ = applyInFilter(expQ, 'vehicle_number', filters.vehicles);
+  expQ = applyInFilter(expQ, 'paid_by', filters.entities);
+
+  const [{ data: trips }, { data: expenses }] = await Promise.all([tripQ, expQ]);
+  const map = new Map<string, { revenue: number; expenses: number }>();
+  for (const t of trips || []) {
+    const key = monthKey(t.date);
+    const row = map.get(key) || { revenue: 0, expenses: 0 };
+    row.revenue += Number(t.total_revenue) || 0;
+    map.set(key, row);
+  }
+  for (const e of expenses || []) {
+    const key = monthKey(e.date);
+    const row = map.get(key) || { revenue: 0, expenses: 0 };
+    row.expenses += Number(e.amount) || 0;
+    map.set(key, row);
+  }
+  return fillTrendMonths(
+    [...map.entries()].map(([month, v]) => ({ month, revenue: v.revenue, expenses: v.expenses })),
+  );
 }
 
 async function fetchMonthlyPlFallback(filters: ReportFilterParams): Promise<MonthlyPlReport> {
