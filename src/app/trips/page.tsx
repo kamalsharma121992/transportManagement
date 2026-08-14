@@ -42,6 +42,7 @@ import { buildTextSearchFilter, TRIP_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
+import { cn } from '@/lib/utils';
 
 const emptyTrip: TripFormData = {
   date: new Date().toISOString().split('T')[0],
@@ -80,6 +81,8 @@ export default function TripsPage() {
   const [parsedTrips, setParsedTrips] = useState<ParsedTripRow[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [filterMonth, setFilterMonth] = useState(currentMonth);
@@ -201,6 +204,7 @@ export default function TripsPage() {
   }
 
   useEffect(() => {
+    setExpandedId(null);
     fetchTrips();
   }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, filterPaymentStatus, searchQuery, sortColumn, sortDirection]);
 
@@ -500,8 +504,41 @@ export default function TripsPage() {
         clearLabel="Reset filters"
       />
 
-      {/* Summary */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Summary: collapsible revenue-only on mobile; full cards on desktop */}
+      <div className="md:hidden space-y-2">
+        <button
+          type="button"
+          onClick={() => setShowSummary((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border bg-white px-3 py-2.5 text-left shadow-sm"
+        >
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Total Revenue</p>
+            <p className="text-sm font-semibold text-green-700 truncate">
+              {formatCurrency(summary.revenue)}
+              <span className="font-normal text-gray-400"> · {summary.count} trips</span>
+            </p>
+          </div>
+          {showSummary ? <ChevronUp className="h-4 w-4 shrink-0 text-gray-500" /> : <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />}
+        </button>
+        {showSummary && (
+          <div className="grid grid-cols-2 gap-3">
+            <Card>
+              <CardContent className="py-3 px-4">
+                <p className="text-xs text-amber-600">Pending</p>
+                <p className="text-lg font-bold text-amber-700">{formatCurrency(summary.pendingRevenue)}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="py-3 px-4">
+                <p className="text-xs text-green-600">Fully Paid</p>
+                <p className="text-lg font-bold text-green-700">{formatCurrency(summary.paidRevenue)}</p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </div>
+
+      <div className="hidden md:grid grid-cols-4 gap-3">
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-gray-500">Trips</p>
@@ -802,7 +839,7 @@ export default function TripsPage() {
 
       {/* Single trip add/edit dialog */}
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) resetFormDialog(); else setDialogOpen(true); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit Trip' : 'New Trip'}</DialogTitle>
           </DialogHeader>
@@ -897,7 +934,124 @@ export default function TripsPage() {
         </DialogContent>
       </Dialog>
 
-      <Card>
+      {/* Mobile cards */}
+      <div className="md:hidden space-y-3">
+        {loading ? (
+          <Card>
+            <CardContent className="py-8 text-center text-gray-500">Loading...</CardContent>
+          </Card>
+        ) : trips.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-gray-500">No trips found</CardContent>
+          </Card>
+        ) : (
+          trips.map((trip) => {
+            const expanded = expandedId === trip.id;
+            const paid = trip.payment_status === 'Fully Paid';
+            return (
+              <Card key={trip.id}>
+                <CardContent className="p-0">
+                  <button
+                    type="button"
+                    className="w-full text-left p-4 space-y-2"
+                    onClick={() => setExpandedId(expanded ? null : trip.id)}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-base truncate">
+                          <span className="font-normal text-gray-500">Vehicle: </span>
+                          <span className="font-bold text-gray-900">{trip.vehicle_number}</span>
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{formatDate(trip.date)}</p>
+                        <p className="mt-1 text-sm text-gray-700 truncate">{trip.route_name}</p>
+                        <p className="text-sm text-gray-600 truncate">{trip.driver_name}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-base font-bold text-green-600">{formatCurrency(Number(trip.total_revenue))}</p>
+                        <span className={cn(
+                          'mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium',
+                          paid ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800',
+                        )}>
+                          {paid ? <CheckCircle2 className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
+                          {paid ? 'Paid' : 'Pending'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-gray-400">
+                      <span>{expanded ? 'Hide details' : 'Tap for details'}</span>
+                      {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    </div>
+                  </button>
+
+                  {expanded && (
+                    <div className="border-t px-4 py-3 space-y-2 bg-gray-50/80">
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Weight</p>
+                          <p className="font-medium text-gray-800">{Number(trip.weight_tons).toFixed(2)} T</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Rate / ton</p>
+                          <p className="font-medium text-gray-800">{formatCurrency(Number(trip.rate_per_ton))}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Advance</p>
+                          <p className="font-medium text-gray-800">{formatCurrency(Number(trip.advance_paid))}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Balance due</p>
+                          <p className="font-medium text-gray-800">{formatCurrency(Number(trip.balance_due))}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Commission</p>
+                          <p className="font-medium text-gray-800">{formatCurrency(Number(trip.commission || 0))}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase text-gray-500">Distance</p>
+                          <p className="font-medium text-gray-800">{Number(trip.distance_km || 0)} km</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={(e) => { e.stopPropagation(); startEdit(trip); }}
+                        >
+                          <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 text-red-600 hover:text-red-700"
+                          onClick={(e) => { e.stopPropagation(); handleDelete(trip.id); }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })
+        )}
+        <Card>
+          <CardContent className="p-0">
+            <PaginationControls
+              page={page}
+              pageSize={pageSize}
+              totalItems={totalTrips}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Desktop table */}
+      <Card className="hidden md:block">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <Table>
