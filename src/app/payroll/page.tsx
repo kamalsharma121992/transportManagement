@@ -9,7 +9,7 @@ import {
   fetchInactivePayroll,
   fetchMonthlyPayroll,
   getEmploymentDaysInMonth,
-  getMonthBounds,
+  periodPickerBounds,
   getSuggestedPayrollMonth,
   postAdvance,
   postDailyAllowance,
@@ -184,7 +184,10 @@ export default function PayrollPage() {
     if (!confirm(`Remove salary expense for ${row.driver.name} in ${selectedMonth}?`)) return;
     setPosting(`revert-salary-${row.driver.name}`);
     try {
-      await revertSalary(row.driver.name, selectedMonth);
+      await revertSalary(row.driver.name, selectedMonth, {
+        from: row.periodStart,
+        to: row.periodEnd,
+      });
       toast.success(`Salary reverted for ${row.driver.name}`);
       await load();
     } catch (e) {
@@ -198,7 +201,10 @@ export default function PayrollPage() {
     if (!confirm(`Remove the last allowance payment for ${row.driver.name} in ${selectedMonth}?`)) return;
     setPosting(`revert-allowance-${row.driver.name}`);
     try {
-      await revertLastAllowance(row.driver.name, selectedMonth);
+      await revertLastAllowance(row.driver.name, selectedMonth, {
+        from: row.periodStart,
+        to: row.periodEnd,
+      });
       toast.success(`Last allowance reverted for ${row.driver.name}`);
       await load();
     } catch (e) {
@@ -230,7 +236,7 @@ export default function PayrollPage() {
         periodDialog.startDate,
         periodDialog.endDate,
       );
-      toast.success(`Start date saved for ${periodDialog.row.driver.name}`);
+      toast.success(`Period saved for ${periodDialog.row.driver.name}`);
       setPeriodDialog(null);
       await load();
     } catch (e) {
@@ -246,13 +252,12 @@ export default function PayrollPage() {
   }
 
   async function loadLeaveDatesForDialog(row: MonthlyPayrollRow) {
-    const { from, to } = getMonthBounds(selectedMonth);
     const { data } = await supabase
       .from('driver_leave')
       .select('date, deduct_salary')
       .eq('driver_name', row.driver.name)
-      .gte('date', from)
-      .lte('date', to);
+      .gte('date', row.periodStart)
+      .lte('date', row.periodEnd);
     const leaveByDate = new Map<string, boolean>();
     for (const r of data || []) {
       leaveByDate.set(r.date, !!r.deduct_salary);
@@ -784,7 +789,7 @@ export default function PayrollPage() {
           {leaveDialog && (
             <div className="space-y-4">
               <p className="text-xs text-gray-500">
-                Click a date: leave (no allowance) → leave + salary deduct → working. Or use the checkbox to apply salary deduction to all leave days. {monthLabel}
+                Click a date: leave (no allowance) → leave + salary deduct → working. Or use the checkbox to apply salary deduction to all leave days.
               </p>
               <label className="flex items-center gap-2 text-sm cursor-pointer">
                 <input
@@ -806,13 +811,16 @@ export default function PayrollPage() {
                   const deductSalary = leaveDialog.leaveByDate.get(date) ?? false;
                   const dayNum = new Date(date + 'T12:00:00').getDate();
                   const dow = new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'short' });
+                  const spansMonths = leaveDialog.row.periodStart.slice(0, 7) !== leaveDialog.row.periodEnd.slice(0, 7);
+                  const monthShort = new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { month: 'short' });
                   return (
                     <button
                       key={date}
                       type="button"
                       onClick={() => toggleLeaveDate(date)}
                       className={cn(
-                        'w-14 rounded-md border px-1 py-1.5 text-center text-xs transition-colors',
+                        'rounded-md border px-1 py-1.5 text-center text-xs transition-colors',
+                        spansMonths ? 'w-16' : 'w-14',
                         isLeave && deductSalary
                           ? 'border-red-600 bg-red-200 text-red-900'
                           : isLeave
@@ -820,7 +828,7 @@ export default function PayrollPage() {
                             : 'border-gray-200 bg-white hover:bg-gray-50',
                       )}
                     >
-                      <div className="font-medium">{dayNum}</div>
+                      <div className="font-medium">{spansMonths ? `${dayNum} ${monthShort}` : dayNum}</div>
                       <div className="text-[10px] opacity-70">{dow}</div>
                       {isLeave && deductSalary && (
                         <div className="text-[9px] font-semibold text-red-700">−sal</div>
@@ -853,19 +861,19 @@ export default function PayrollPage() {
       <Dialog open={!!periodDialog} onOpenChange={(o) => !o && setPeriodDialog(null)}>
         <DialogContent className="max-w-sm w-[calc(100%-1.5rem)]">
           <DialogHeader>
-            <DialogTitle>Month start — {periodDialog?.row.driver.name}</DialogTitle>
+            <DialogTitle>Payroll period — {periodDialog?.row.driver.name}</DialogTitle>
           </DialogHeader>
           {periodDialog && (
             <div className="space-y-4">
               <p className="text-xs text-gray-500">
-                First and last working day in {monthLabel}. Allowance counts only between these dates.
+                First and last working day for this cycle. Can start in the previous month or end in the next (e.g. 18 Jul–18 Aug). Allowance counts only between these dates.
               </p>
               <div>
                 <Label>Start date</Label>
                 <Input
                   type="date"
                   value={periodDialog.startDate}
-                  min={getMonthBounds(selectedMonth).from}
+                  min={periodPickerBounds(selectedMonth).min}
                   max={periodDialog.endDate}
                   onChange={(e) => setPeriodDialog({ ...periodDialog, startDate: e.target.value })}
                 />
@@ -876,7 +884,7 @@ export default function PayrollPage() {
                   type="date"
                   value={periodDialog.endDate}
                   min={periodDialog.startDate}
-                  max={getMonthBounds(selectedMonth).to}
+                  max={periodPickerBounds(selectedMonth).max}
                   onChange={(e) => setPeriodDialog({ ...periodDialog, endDate: e.target.value })}
                 />
               </div>

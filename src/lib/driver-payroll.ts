@@ -139,6 +139,35 @@ export function getMonthBounds(month: string): { from: string; to: string } {
   return getMonthDateRange(month);
 }
 
+/** Widen a month window so custom payroll periods that spill into the previous/next month are included. */
+export function payrollQueryRange(
+  month: string,
+  periods?: Map<string, DriverPayrollPeriod> | null,
+): { from: string; to: string } {
+  const bounds = getMonthBounds(month);
+  if (!periods || periods.size === 0) return bounds;
+  let from = bounds.from;
+  let to = bounds.to;
+  for (const p of periods.values()) {
+    if (p.start_date && p.start_date < from) from = p.start_date;
+    if (p.end_date && p.end_date > to) to = p.end_date;
+  }
+  return { from, to };
+}
+
+/** Date picker window: previous month through next month, so 18th–18th cycles can be selected. */
+export function periodPickerBounds(month: string): { min: string; max: string } {
+  const [year, mon] = month.split('-').map(Number);
+  const prev = new Date(year, mon - 2, 1);
+  const next = new Date(year, mon, 1);
+  const prevMonth = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+  const nextMonth = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+  return {
+    min: getMonthBounds(prevMonth).from,
+    max: getMonthBounds(nextMonth).to,
+  };
+}
+
 export function getTodayDateString(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -152,7 +181,8 @@ export function getPayrollAsOfDate(month: string): string {
   return to;
 }
 
-/** Calendar days in the payroll period. Pass asOfDate to cap at today (current month allowance). */
+/** Calendar days in the payroll period. Pass asOfDate to cap at today (current month allowance).
+ *  A saved period may start in the previous month or end in the next (e.g. 18 Jul–18 Aug). */
 export function getEmploymentDaysInMonth(
   driver: Driver,
   month: string,
@@ -163,9 +193,9 @@ export function getEmploymentDaysInMonth(
   let start = from;
   let end = to;
 
-  if (period) {
-    if (period.start_date > start) start = period.start_date;
-    if (period.end_date && period.end_date < end) end = period.end_date;
+  if (period?.start_date || period?.end_date) {
+    if (period.start_date) start = period.start_date;
+    if (period.end_date) end = period.end_date;
   } else {
     if (driver.joined_date && driver.joined_date > start) start = driver.joined_date;
     if (driver.left_date && driver.left_date < end) end = driver.left_date;
@@ -232,16 +262,12 @@ export async function setPayrollPeriod(
   startDate: string,
   endDate: string | null,
 ): Promise<void> {
-  const { from, to } = getMonthBounds(month);
-  const start = startDate < from ? from : startDate;
-  const end = endDate && endDate > to ? to : endDate;
-
   const { error } = await supabase.from('driver_payroll_period').upsert(
     {
       driver_name: driverName,
       month,
-      start_date: start,
-      end_date: end,
+      start_date: startDate,
+      end_date: endDate,
     },
     { onConflict: 'driver_name,month' },
   );
@@ -281,8 +307,11 @@ function normalizeDriver(d: Record<string, unknown>): Driver {
   };
 }
 
-export async function fetchLeaveForMonth(month: string): Promise<Map<string, DriverLeaveByDriver>> {
-  const { from, to } = getMonthBounds(month);
+export async function fetchLeaveForMonth(
+  month: string,
+  periods?: Map<string, DriverPayrollPeriod> | null,
+): Promise<Map<string, DriverLeaveByDriver>> {
+  const { from, to } = payrollQueryRange(month, periods);
   const { data, error } = await supabase
     .from('driver_leave')
     .select('driver_name, date, deduct_salary')
@@ -311,7 +340,9 @@ export async function setDriverLeaveDates(
 ): Promise<void> {
   const employmentDays = new Set(getEmploymentDaysInMonth(driver, month, period, null));
   const validLeave = leaveEntries.filter((e) => employmentDays.has(e.date));
-  const { from, to } = getMonthBounds(month);
+  const dates = [...employmentDays].sort();
+  const from = dates[0] ?? getMonthBounds(month).from;
+  const to = dates[dates.length - 1] ?? getMonthBounds(month).to;
 
   const { error: delError } = await supabase
     .from('driver_leave')
@@ -408,8 +439,11 @@ function buildPayrollRows(
   });
 }
 
-async function fetchPayExpenseMaps(month: string) {
-  const { from, to } = getMonthBounds(month);
+async function fetchPayExpenseMaps(
+  month: string,
+  periods?: Map<string, DriverPayrollPeriod> | null,
+) {
+  const { from, to } = payrollQueryRange(month, periods);
   const { data: expenses } = await supabase
     .from('expenses')
     .select('person, category, amount, date')
@@ -460,8 +494,8 @@ export async function fetchMonthlyPayroll(month: string): Promise<MonthlyPayroll
       d.status === 'active'
       && isDriverActiveInMonth(d, month, periodByDriver.get(d.name)),
   );
-  const leaveByDriver = await fetchLeaveForMonth(month);
-  const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month);
+  const leaveByDriver = await fetchLeaveForMonth(month, periodByDriver);
+  const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month, periodByDriver);
 
   return buildPayrollRows(
     drivers,
@@ -477,8 +511,8 @@ export async function fetchMonthlyPayroll(month: string): Promise<MonthlyPayroll
 export async function fetchInactivePayroll(month: string): Promise<MonthlyPayrollRow[]> {
   const allDrivers = await fetchDrivers();
   const periodByDriver = await fetchPayrollPeriods(month);
-  const leaveByDriver = await fetchLeaveForMonth(month);
-  const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month);
+  const leaveByDriver = await fetchLeaveForMonth(month, periodByDriver);
+  const { allowanceByDriver, advanceByDriver, salaryByDriver } = await fetchPayExpenseMaps(month, periodByDriver);
 
   const drivers = allDrivers.filter((d) => {
     if (d.status !== 'inactive') return false;
@@ -592,8 +626,12 @@ async function deleteDriverPayExpenses(params: {
   return data.length;
 }
 
-export async function revertSalary(driverName: string, month: string): Promise<void> {
-  const { from, to } = getMonthBounds(month);
+export async function revertSalary(
+  driverName: string,
+  month: string,
+  range?: { from: string; to: string },
+): Promise<void> {
+  const { from, to } = range ?? getMonthBounds(month);
   const deleted = await deleteDriverPayExpenses({
     driverName,
     dateFrom: from,
@@ -603,8 +641,12 @@ export async function revertSalary(driverName: string, month: string): Promise<v
   if (deleted === 0) throw new Error('No salary expense found for this month');
 }
 
-export async function revertLastAllowance(driverName: string, month: string): Promise<void> {
-  const { from, to } = getMonthBounds(month);
+export async function revertLastAllowance(
+  driverName: string,
+  month: string,
+  range?: { from: string; to: string },
+): Promise<void> {
+  const { from, to } = range ?? getMonthBounds(month);
   const { data, error } = await supabase
     .from('expenses')
     .select('id')
