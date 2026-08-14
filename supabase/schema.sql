@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS trips (
   advance_paid DECIMAL(12,2) DEFAULT 0,
   balance_due DECIMAL(12,2) DEFAULT 0,
   payment_status TEXT NOT NULL DEFAULT 'Fully Paid',
+  payment_expected_date DATE,
+  notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -295,7 +297,12 @@ BEGIN
     );
 
   SELECT coalesce(sum(value), 0) INTO capital_total FROM capital_contributions;
-  SELECT coalesce(sum(total_revenue), 0) INTO cash_revenue FROM trips;
+  SELECT coalesce(sum(
+    CASE
+      WHEN payment_status = 'Fully Paid' THEN total_revenue
+      ELSE coalesce(advance_paid, 0)
+    END
+  ), 0) INTO cash_revenue FROM trips;
   SELECT coalesce(sum(amount), 0) INTO cash_exp_revenue FROM expenses WHERE payment_source = 'Revenue' AND category IS DISTINCT FROM 'Expense Advance';
   SELECT coalesce(sum(value), 0) INTO cash_cap_revenue
   FROM capital_contributions WHERE status = 'Paid' AND payment_source = 'Revenue';

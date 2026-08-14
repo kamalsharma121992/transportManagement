@@ -40,14 +40,16 @@ function formatBadgeCount(n: number) {
 export function Sidebar({
   overdueCount = 0,
   warningCount = 0,
+  tripOverdueCount = 0,
 }: {
   overdueCount?: number;
   warningCount?: number;
+  tripOverdueCount?: number;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const mobileBadgeCount = overdueCount > 0 ? overdueCount : warningCount;
-  const mobileBadgeIsOverdue = overdueCount > 0;
+  const mobileBadgeCount = overdueCount > 0 ? overdueCount : tripOverdueCount > 0 ? tripOverdueCount : warningCount;
+  const mobileBadgeIsOverdue = overdueCount > 0 || tripOverdueCount > 0;
 
   return (
     <>
@@ -94,8 +96,10 @@ export function Sidebar({
               pathname === item.href ||
               (item.href !== '/' && pathname.startsWith(item.href));
             const isAdvances = item.href === '/expense-advances';
+            const isTrips = item.href === '/trips';
             const showOverdue = isAdvances && overdueCount > 0;
             const showWarning = isAdvances && warningCount > 0;
+            const showTripOverdue = isTrips && tripOverdueCount > 0;
             return (
               <Link
                 key={item.href}
@@ -108,6 +112,7 @@ export function Sidebar({
                     : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
                   showOverdue && !isActive && 'bg-red-50 text-red-800 hover:bg-red-100',
                   !showOverdue && showWarning && !isActive && 'bg-amber-50 text-amber-900 hover:bg-amber-100',
+                  showTripOverdue && !isActive && 'bg-red-50 text-red-800 hover:bg-red-100',
                 )}
               >
                 <item.icon size={18} />
@@ -124,6 +129,11 @@ export function Sidebar({
                         {formatBadgeCount(overdueCount)}
                       </span>
                     )}
+                  </span>
+                )}
+                {showTripOverdue && (
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white">
+                    {formatBadgeCount(tripOverdueCount)}
                   </span>
                 )}
               </Link>

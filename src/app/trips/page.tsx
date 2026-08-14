@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { supabase, Trip, TRIP_PAYMENT_STATUSES } from '@/lib/supabase';
+import { supabase, Trip, TRIP_PAYMENT_STATUSES, type TripPaymentStatus } from '@/lib/supabase';
 import { formatCurrency, formatDate, getMonthFilterOptions, getMonthDateRange, FILTER_SELECT_CLASS } from '@/lib/format';
 import {
   parseTripPdf,
@@ -9,6 +9,15 @@ import {
   type ParsedTripRow,
   type TripFormData,
 } from '@/lib/parse-trip-pdf';
+import {
+  TRIP_PAYMENT_DISPLAY_FILTERS,
+  getTripPaymentDisplayStatus,
+  isFullPendingAmounts,
+  isTripPaymentDueSoon,
+  isTripPaymentOverdue,
+  isTripUnpaid,
+  normalizeTripPaymentStatus,
+} from '@/lib/trip-payments';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +37,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock } from 'lucide-react';
+import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -57,12 +66,22 @@ const emptyTrip: TripFormData = {
   advance_paid: 0,
   balance_due: 0,
   payment_status: 'Fully Paid',
+  payment_expected_date: '',
+  notes: '',
 };
 
 const SELECT_CLASS = 'w-full min-w-[120px] border rounded-md px-2 py-1.5 text-sm bg-white';
 
 function calcNetRevenue(weight: number, rate: number, commission: number) {
   return Math.max(Math.round((weight * rate - (commission || 0)) * 100) / 100, 0);
+}
+
+function withFullPendingAmounts<T extends { advance_paid: number; balance_due: number; total_revenue: number }>(
+  form: T,
+  fullPending: boolean,
+): T {
+  if (!fullPending) return form;
+  return { ...form, advance_paid: 0, balance_due: form.total_revenue };
 }
 
 export default function TripsPage() {
@@ -75,6 +94,7 @@ export default function TripsPage() {
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyTrip);
+  const [fullPending, setFullPending] = useState(false);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfParsing, setPdfParsing] = useState(false);
   const [pdfImporting, setPdfImporting] = useState(false);
@@ -149,8 +169,9 @@ export default function TripsPage() {
 
   function applyTripFilters<Q>(query: Q): Q {
     let q = query as {
-      eq: (col: string, val: string) => typeof q;
+      eq: (col: string, val: string | number) => typeof q;
       in: (col: string, vals: string[]) => typeof q;
+      gt: (col: string, val: number) => typeof q;
       gte: (col: string, val: string) => typeof q;
       lte: (col: string, val: string) => typeof q;
       or: (filter: string) => typeof q;
@@ -158,7 +179,13 @@ export default function TripsPage() {
     q = applyInFilter(q, 'vehicle_number', filterVehicles);
     q = applyInFilter(q, 'route_name', filterRoutes);
     q = applyInFilter(q, 'driver_name', filterDrivers);
-    if (filterPaymentStatus) q = q.eq('payment_status', filterPaymentStatus);
+    if (filterPaymentStatus === 'Fully Paid') {
+      q = q.eq('payment_status', 'Fully Paid');
+    } else if (filterPaymentStatus === 'Pending') {
+      q = q.eq('payment_status', 'Pending').eq('advance_paid', 0);
+    } else if (filterPaymentStatus === 'Partial Pending') {
+      q = q.eq('payment_status', 'Pending').gt('advance_paid', 0);
+    }
     if (filterMonth) {
       const { from, to } = getMonthDateRange(filterMonth);
       q = q.gte('date', from).lte('date', to);
@@ -184,21 +211,33 @@ export default function TripsPage() {
     );
     const { data, count, error } = await listQuery.range(from, to);
 
-    const summaryQuery = applyTripFilters(supabase.from('trips').select('total_revenue, weight_tons, payment_status'));
+    const summaryQuery = applyTripFilters(supabase.from('trips').select('total_revenue, weight_tons, payment_status, advance_paid, balance_due'));
     const { data: summaryRows, error: summaryError } = await summaryQuery;
 
     if (error) { toast.error('Failed to load trips: ' + error.message); setLoading(false); return; }
     if (summaryError) { toast.error('Failed to load trip summary: ' + summaryError.message); }
 
-    const rows = (summaryRows || []) as { total_revenue: number; weight_tons: number; payment_status: string }[];
+    const rows = (summaryRows || []) as {
+      total_revenue: number;
+      weight_tons: number;
+      payment_status: string;
+      advance_paid: number;
+      balance_due: number;
+    }[];
     setTrips(data || []);
     setTotalTrips(count ?? 0);
     setSummary({
       count: count ?? 0,
       revenue: rows.reduce((s, t) => s + Number(t.total_revenue), 0),
       weight: rows.reduce((s, t) => s + Number(t.weight_tons), 0),
-      pendingRevenue: rows.filter((t) => t.payment_status !== 'Fully Paid').reduce((s, t) => s + Number(t.total_revenue), 0),
-      paidRevenue: rows.filter((t) => t.payment_status === 'Fully Paid').reduce((s, t) => s + Number(t.total_revenue), 0),
+      pendingRevenue: rows.reduce((s, t) => (
+        isTripUnpaid(t.payment_status) ? s + Number(t.balance_due || 0) : s
+      ), 0),
+      paidRevenue: rows.reduce((s, t) => (
+        t.payment_status === 'Fully Paid'
+          ? s + Number(t.total_revenue)
+          : s + Number(t.advance_paid || 0)
+      ), 0),
     });
     setLoading(false);
   }
@@ -235,6 +274,7 @@ export default function TripsPage() {
   function resetFormDialog() {
     setEditingId(null);
     setForm(emptyTrip);
+    setFullPending(false);
     setDialogOpen(false);
   }
 
@@ -376,7 +416,11 @@ export default function TripsPage() {
     }
 
     setPdfImporting(true);
-    const payload = ready.map(({ rowId, complete, missingFields, ...trip }) => trip);
+    const payload = ready.map(({ rowId, complete, missingFields, ...trip }) => ({
+      ...trip,
+      payment_expected_date: trip.payment_expected_date || null,
+      notes: trip.notes || null,
+    }));
     const { error } = await supabase.from('trips').insert(payload);
     setPdfImporting(false);
 
@@ -398,37 +442,43 @@ export default function TripsPage() {
     }
     const rate = Number(route.standard_rate_per_ton) || 0;
     const commission = Number(route.commission) || 0;
-    setForm((f) => ({
+    setForm((f) => withFullPendingAmounts({
       ...f,
       route_name: routeName,
       distance_km: Number(route.distance_km) || f.distance_km,
       rate_per_ton: rate,
       commission,
       total_revenue: calcNetRevenue(f.weight_tons, rate, commission),
-    }));
+    }, fullPending && f.payment_status === 'Pending'));
   }
 
   function recalcRevenue(weight: number, rate: number, commission?: number) {
     setForm((f) => {
       const nextCommission = commission ?? f.commission;
-      return {
+      return withFullPendingAmounts({
         ...f,
         weight_tons: weight,
         rate_per_ton: rate,
         commission: nextCommission,
         total_revenue: calcNetRevenue(weight, rate, nextCommission),
-      };
+      }, fullPending && f.payment_status === 'Pending');
     });
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const payload = {
+      ...form,
+      payment_expected_date:
+        form.payment_status === 'Pending' ? form.payment_expected_date || null : null,
+      notes: form.notes.trim() || null,
+    };
     if (editingId) {
-      const { error } = await supabase.from('trips').update(form).eq('id', editingId);
+      const { error } = await supabase.from('trips').update(payload).eq('id', editingId);
       if (error) { toast.error(error.message); return; }
       toast.success('Trip updated');
     } else {
-      const { error } = await supabase.from('trips').insert(form);
+      const { error } = await supabase.from('trips').insert(payload);
       if (error) { toast.error(error.message); return; }
       toast.success('Trip added');
     }
@@ -438,7 +488,7 @@ export default function TripsPage() {
 
   function startEdit(trip: Trip) {
     setEditingId(trip.id);
-    setForm({
+    const next = {
       date: trip.date,
       vehicle_number: trip.vehicle_number,
       route_name: trip.route_name,
@@ -450,8 +500,12 @@ export default function TripsPage() {
       commission: Number(trip.commission) || 0,
       advance_paid: Number(trip.advance_paid),
       balance_due: Number(trip.balance_due),
-      payment_status: trip.payment_status === 'Fully Paid' ? 'Fully Paid' : 'Pending',
-    });
+      payment_status: normalizeTripPaymentStatus(trip.payment_status),
+      payment_expected_date: trip.payment_expected_date || '',
+      notes: trip.notes || '',
+    };
+    setForm(next);
+    setFullPending(isFullPendingAmounts(next));
     setDialogOpen(true);
   }
 
@@ -465,6 +519,59 @@ export default function TripsPage() {
 
   const readyCount = parsedTrips.filter((r) => r.complete).length;
 
+  function renderPaymentBadge(trip: Trip) {
+    if (trip.payment_status === 'Fully Paid') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800">
+          <CheckCircle2 className="h-3 w-3" /> Fully Paid
+        </span>
+      );
+    }
+    const overdue = isTripPaymentOverdue(trip);
+    if (overdue) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-600 text-white">
+          <AlertTriangle className="h-3 w-3" /> Overdue
+        </span>
+      );
+    }
+    const display = getTripPaymentDisplayStatus(trip);
+    if (display === 'Partial Pending') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-100 text-orange-800">
+          <Clock className="h-3 w-3" /> Partial Pending
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-800">
+        <Clock className="h-3 w-3" /> Pending
+      </span>
+    );
+  }
+
+  function paymentHighlightClass(trip: Trip) {
+    const overdue = isTripPaymentOverdue(trip);
+    const dueSoon = isTripPaymentDueSoon(trip);
+    const display = getTripPaymentDisplayStatus(trip);
+    return cn(
+      overdue && 'border-red-400 bg-red-50',
+      dueSoon && display === 'Partial Pending' && 'border-orange-400 bg-orange-50',
+      dueSoon && display === 'Pending' && 'border-amber-400 bg-amber-50',
+    );
+  }
+
+  function paymentRowClass(trip: Trip) {
+    const overdue = isTripPaymentOverdue(trip);
+    const dueSoon = isTripPaymentDueSoon(trip);
+    const display = getTripPaymentDisplayStatus(trip);
+    return cn(
+      overdue && 'bg-red-100 border-l-4 border-l-red-600 hover:bg-red-100/90',
+      dueSoon && display === 'Partial Pending' && 'bg-orange-100 border-l-4 border-l-orange-500 hover:bg-orange-100/90',
+      dueSoon && display === 'Pending' && 'bg-amber-100 border-l-4 border-l-amber-500 hover:bg-amber-100/90',
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -472,7 +579,7 @@ export default function TripsPage() {
         search={{
           value: searchInput,
           onChange: setSearchInput,
-          placeholder: 'Search vehicle, route, driver...',
+          placeholder: 'Search vehicle, route, driver, notes...',
         }}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
@@ -633,7 +740,7 @@ export default function TripsPage() {
                     onChange={(e) => setFilterPaymentStatus(e.target.value)}
                   >
                     <option value="">All</option>
-                    {TRIP_PAYMENT_STATUSES.map((s) => (
+                    {TRIP_PAYMENT_DISPLAY_FILTERS.map((s) => (
                       <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
@@ -898,16 +1005,43 @@ export default function TripsPage() {
               </div>
               <div>
                 <Label>Total Revenue</Label>
-                <Input type="number" step="0.01" value={form.total_revenue || ''} onChange={(e) => setForm({ ...form, total_revenue: Number(e.target.value) })} required />
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={form.total_revenue || ''}
+                  onChange={(e) => {
+                    const total_revenue = Number(e.target.value);
+                    setForm((f) => withFullPendingAmounts({ ...f, total_revenue }, fullPending && f.payment_status === 'Pending'));
+                  }}
+                  required
+                />
                 <p className="text-[10px] text-gray-400 mt-1">weight × rate − commission</p>
               </div>
               <div>
                 <Label>Advance Paid</Label>
-                <Input type="number" step="0.01" value={form.advance_paid || ''} onChange={(e) => setForm({ ...form, advance_paid: Number(e.target.value) })} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={form.advance_paid || ''}
+                  onChange={(e) => {
+                    const advance_paid = Number(e.target.value);
+                    setForm((f) => ({ ...f, advance_paid }));
+                    if (fullPending && advance_paid !== 0) setFullPending(false);
+                  }}
+                />
               </div>
               <div>
                 <Label>Balance Due</Label>
-                <Input type="number" step="0.01" value={form.balance_due || ''} onChange={(e) => setForm({ ...form, balance_due: Number(e.target.value) })} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={form.balance_due || ''}
+                  onChange={(e) => {
+                    const balance_due = Number(e.target.value);
+                    setForm((f) => ({ ...f, balance_due }));
+                    if (fullPending && balance_due !== form.total_revenue) setFullPending(false);
+                  }}
+                />
               </div>
               <div>
                 <Label>Payment</Label>
@@ -915,18 +1049,58 @@ export default function TripsPage() {
                   className="w-full border rounded-md px-3 py-2 text-sm"
                   value={form.payment_status}
                   onChange={(e) => {
-                    const payment_status = e.target.value as 'Pending' | 'Fully Paid';
-                    setForm((f) => ({
-                      ...f,
-                      payment_status,
-                      ...(payment_status === 'Fully Paid' ? { balance_due: 0 } : {}),
-                    }));
+                    const payment_status = e.target.value as TripPaymentStatus;
+                    const nextFullPending = payment_status === 'Pending';
+                    setFullPending(nextFullPending);
+                    setForm((f) => {
+                      if (payment_status === 'Fully Paid') {
+                        return { ...f, payment_status, balance_due: 0, payment_expected_date: '' };
+                      }
+                      return withFullPendingAmounts({ ...f, payment_status }, nextFullPending);
+                    });
                   }}
                 >
                   {TRIP_PAYMENT_STATUSES.map((s) => (
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
+              </div>
+              {form.payment_status === 'Pending' && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="full-pending"
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={fullPending}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setFullPending(checked);
+                        if (checked) {
+                          setForm((f) => withFullPendingAmounts(f, true));
+                        }
+                      }}
+                    />
+                    <Label htmlFor="full-pending" className="font-normal">Full amount pending</Label>
+                  </div>
+                  <div>
+                    <Label>Expected payment date</Label>
+                    <Input
+                      type="date"
+                      value={form.payment_expected_date}
+                      onChange={(e) => setForm({ ...form, payment_expected_date: e.target.value })}
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">Optional reminder for remaining balance</p>
+                  </div>
+                </>
+              )}
+              <div className="sm:col-span-2">
+                <Label>Notes</Label>
+                <Input
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  placeholder="Optional"
+                />
               </div>
             </div>
             <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Trip</Button>
@@ -947,9 +1121,13 @@ export default function TripsPage() {
         ) : (
           trips.map((trip) => {
             const expanded = expandedId === trip.id;
-            const paid = trip.payment_status === 'Fully Paid';
+            const overdue = isTripPaymentOverdue(trip);
+            const pending = isTripUnpaid(trip.payment_status);
             return (
-              <Card key={trip.id}>
+              <Card
+                key={trip.id}
+                className={paymentHighlightClass(trip)}
+              >
                 <CardContent className="p-0">
                   <button
                     type="button"
@@ -965,16 +1143,13 @@ export default function TripsPage() {
                         <p className="text-xs text-gray-500 mt-0.5">{formatDate(trip.date)}</p>
                         <p className="mt-1 text-sm text-gray-700 truncate">{trip.route_name}</p>
                         <p className="text-sm text-gray-600 truncate">{trip.driver_name}</p>
+                        {trip.notes && (
+                          <p className="text-xs text-gray-500 mt-1 line-clamp-2">{trip.notes}</p>
+                        )}
                       </div>
-                      <div className="shrink-0 text-right">
+                      <div className="shrink-0 text-right space-y-1">
                         <p className="text-base font-bold text-green-600">{formatCurrency(Number(trip.total_revenue))}</p>
-                        <span className={cn(
-                          'mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium',
-                          paid ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800',
-                        )}>
-                          {paid ? <CheckCircle2 className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
-                          {paid ? 'Paid' : 'Pending'}
-                        </span>
+                        {renderPaymentBadge(trip)}
                       </div>
                     </div>
                     <div className="flex items-center justify-between text-xs text-gray-400">
@@ -1010,6 +1185,20 @@ export default function TripsPage() {
                           <p className="text-[10px] uppercase text-gray-500">Distance</p>
                           <p className="font-medium text-gray-800">{Number(trip.distance_km || 0)} km</p>
                         </div>
+                        {pending && trip.payment_expected_date && (
+                          <div className="col-span-2">
+                            <p className="text-[10px] uppercase text-gray-500">Expected payment</p>
+                            <p className={cn('font-medium', overdue ? 'text-red-700' : 'text-gray-800')}>
+                              {formatDate(trip.payment_expected_date)}
+                            </p>
+                          </div>
+                        )}
+                        {trip.notes && (
+                          <div className="col-span-2">
+                            <p className="text-[10px] uppercase text-gray-500">Notes</p>
+                            <p className="font-medium text-gray-800 whitespace-pre-wrap">{trip.notes}</p>
+                          </div>
+                        )}
                       </div>
                       <div className="flex gap-2 pt-1">
                         <Button
@@ -1065,21 +1254,28 @@ export default function TripsPage() {
                   <TableHead className="text-right">Rate/Ton</TableHead>
                   <SortableTableHead label="Total Revenue" column="total_revenue" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
                   <TableHead>Payment</TableHead>
+                  <TableHead>Notes</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8">Loading...</TableCell>
+                    <TableCell colSpan={10} className="text-center py-8">Loading...</TableCell>
                   </TableRow>
                 ) : trips.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-gray-500">No trips found</TableCell>
+                    <TableCell colSpan={10} className="text-center py-8 text-gray-500">No trips found</TableCell>
                   </TableRow>
                 ) : (
-                  trips.map((trip) => (
-                    <TableRow key={trip.id}>
+                  trips.map((trip) => {
+                    const overdue = isTripPaymentOverdue(trip);
+                    const pending = isTripUnpaid(trip.payment_status);
+                    return (
+                    <TableRow
+                      key={trip.id}
+                      className={paymentRowClass(trip)}
+                    >
                       <TableCell>{formatDate(trip.date)}</TableCell>
                       <TableCell><Badge variant="outline">{trip.vehicle_number}</Badge></TableCell>
                       <TableCell>{trip.route_name}</TableCell>
@@ -1088,15 +1284,17 @@ export default function TripsPage() {
                       <TableCell className="text-right">{formatCurrency(Number(trip.rate_per_ton))}</TableCell>
                       <TableCell className="text-right font-medium text-green-600">{formatCurrency(Number(trip.total_revenue))}</TableCell>
                       <TableCell>
-                        {trip.payment_status === 'Fully Paid' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                            <CheckCircle2 className="h-3 w-3" /> Fully Paid
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                            <Clock className="h-3 w-3" /> Pending
-                          </span>
-                        )}
+                        <div className="space-y-0.5">
+                          {renderPaymentBadge(trip)}
+                          {pending && trip.payment_expected_date && (
+                            <p className={cn('text-[10px]', overdue ? 'text-red-700 font-medium' : 'text-gray-500')}>
+                              Due {formatDate(trip.payment_expected_date)}
+                            </p>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="max-w-[180px] text-sm text-gray-600 truncate" title={trip.notes || undefined}>
+                        {trip.notes || '—'}
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
@@ -1109,7 +1307,8 @@ export default function TripsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

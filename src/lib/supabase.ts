@@ -106,10 +106,13 @@ export type Trip = {
   commission: number;
   advance_paid: number;
   balance_due: number;
-  payment_status: 'Pending' | 'Fully Paid';
+  payment_status: TripPaymentStatus;
+  payment_expected_date: string | null;
+  notes: string | null;
 };
 
 export const TRIP_PAYMENT_STATUSES = ['Fully Paid', 'Pending'] as const;
+export type TripPaymentStatus = (typeof TRIP_PAYMENT_STATUSES)[number];
 
 export type ExpenseType = 'vehicle' | 'operational' | 'personal' | 'other';
 

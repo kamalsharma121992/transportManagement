@@ -11,6 +11,8 @@ export type TripFormData = {
   advance_paid: number;
   balance_due: number;
   payment_status: 'Pending' | 'Fully Paid';
+  payment_expected_date: string;
+  notes: string;
 };
 
 export type ParsedTripRow = TripFormData & {
@@ -56,6 +58,8 @@ const FIELD_LABELS: Record<keyof TripFormData, string> = {
   advance_paid: 'Advance',
   balance_due: 'Balance',
   payment_status: 'Payment',
+  payment_expected_date: 'Expected',
+  notes: 'Notes',
 };
 
 const EMPTY_FORM: TripFormData = {
@@ -71,6 +75,8 @@ const EMPTY_FORM: TripFormData = {
   advance_paid: 0,
   balance_due: 0,
   payment_status: 'Fully Paid',
+  payment_expected_date: '',
+  notes: '',
 };
 
 type PdfTextItem = { str: string; x: number; y: number };

@@ -306,7 +306,7 @@ export default function Dashboard() {
             <p className={`text-base sm:text-xl font-bold truncate ${stats.cashAvailable >= 0 ? 'text-green-700' : 'text-red-700'}`}>
               {formatCurrency(stats.cashAvailable)}
             </p>
-            <p className="text-[10px] sm:text-xs text-gray-400">from revenue</p>
+            <p className="text-[10px] sm:text-xs text-gray-400">collected payments</p>
           </CardContent>
         </Card>
       </div>

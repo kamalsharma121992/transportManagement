@@ -20,7 +20,7 @@ export function buildTextSearchFilter(columns: string[], term: string): string |
   return columns.map((col) => `${col}.ilike."${pattern}"`).join(',');
 }
 
-export const TRIP_SEARCH_COLUMNS = ['vehicle_number', 'route_name', 'driver_name'] as const;
+export const TRIP_SEARCH_COLUMNS = ['vehicle_number', 'route_name', 'driver_name', 'notes'] as const;
 
 export const EXPENSE_SEARCH_COLUMNS = [
   'description',

@@ -183,7 +183,7 @@ async function fetchDashboardStatsFallback(
     buildExpenseFilterQuery(filters).select('*', { count: 'exact', head: true }),
     buildExpenseFilterQuery(filters).select('date, amount, category, paid_by, expense_type, vehicle_number'),
     supabase.from('capital_contributions').select('value'),
-    supabase.from('trips').select('total_revenue'),
+    supabase.from('trips').select('total_revenue, payment_status, advance_paid'),
     supabase.from('expenses').select('amount, payment_source, category').neq('category', EXPENSE_ADVANCE_CATEGORY),
     supabase.from('capital_contributions').select('value, status, payment_source'),
   ]);
@@ -226,7 +226,11 @@ async function fetchDashboardStatsFallback(
     }
   });
 
-  const allRevenue = (allTripRevenue || []).reduce((s, r) => s + num(r.total_revenue), 0);
+  const allRevenue = (allTripRevenue || []).reduce((s, r) => {
+    const row = r as { total_revenue: number; payment_status: string; advance_paid: number };
+    if (row.payment_status === 'Fully Paid') return s + num(row.total_revenue);
+    return s + num(row.advance_paid);
+  }, 0);
   const allExpFromRevenue = (allExpRevenue || [])
     .filter((r) => r.payment_source === 'Revenue' && r.category !== EXPENSE_ADVANCE_CATEGORY)
     .reduce((s, r) => s + num(r.amount), 0);
