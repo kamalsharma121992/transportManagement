@@ -31,7 +31,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Pencil, Trash2, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Pencil, Trash2, ChevronDown, ChevronUp, X, Download, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -46,6 +46,7 @@ import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
+import { downloadExpensesCsv, expenseExportSuffix, printExpensesPdf } from '@/lib/expense-export';
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -105,6 +106,7 @@ export default function ExpensesPage() {
   );
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [cardsTableMissing, setCardsTableMissing] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Filters — default to current month
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -194,6 +196,60 @@ export default function ExpensesPage() {
       maheshTotal: (summaryRows || []).filter((e) => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0),
     });
     setLoading(false);
+  }
+
+  async function fetchAllFilteredExpenses(): Promise<Expense[]> {
+    const batchSize = 1000;
+    const all: Expense[] = [];
+    let from = 0;
+    while (true) {
+      const to = from + batchSize - 1;
+      const query = applySupabaseSort(
+        applyExpenseFilters(supabase.from('expenses').select('*')),
+        sortColumn,
+        sortDirection,
+      );
+      const { data, error } = await query.range(from, to);
+      if (error) throw error;
+      const batch = (data || []) as Expense[];
+      all.push(...batch);
+      if (batch.length < batchSize) break;
+      from += batchSize;
+    }
+    return all;
+  }
+
+  async function handleExport(format: 'csv' | 'pdf') {
+    setExporting(true);
+    try {
+      const rows = await fetchAllFilteredExpenses();
+      if (rows.length === 0) {
+        toast.error('No expenses to export');
+        return;
+      }
+      const suffix = expenseExportSuffix(filterMonth, filterDateFrom, filterDateTo);
+      const filterLabel = activeFilterLabels.length > 0 ? activeFilterLabels.join(' · ') : 'All expenses';
+      const totals = {
+        total: rows.reduce((s, e) => s + Number(e.amount), 0),
+        jmTotal: rows.filter((e) => e.paid_by === 'JM transport').reduce((s, e) => s + Number(e.amount), 0),
+        maheshTotal: rows.filter((e) => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0),
+      };
+      if (format === 'csv') {
+        downloadExpensesCsv(rows, suffix);
+      } else {
+        printExpensesPdf({
+          expenses: rows,
+          filterLabel,
+          ...totals,
+          generatedOn: new Date().toISOString().split('T')[0],
+        });
+      }
+      toast.success(`Exported ${rows.length} expense(s) as ${format.toUpperCase()}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
   }
 
   const hasActiveFilters = filterMonth !== currentMonth || !!filterType || filterVehicles.length > 0 || filterCategories.length > 0 || filterPersons.length > 0 || filterPaidByPersons.length > 0 || filterPaidByEntities.length > 0 || filterPaymentSources.length > 0 || !!filterDateFrom || !!filterDateTo || !!searchQuery;
@@ -461,6 +517,18 @@ export default function ExpensesPage() {
         }}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
+        actions={
+          <>
+            <Button variant="outline" size="sm" disabled={exporting || loading} onClick={() => handleExport('csv')}>
+              <Download className="h-4 w-4 mr-1" />
+              CSV
+            </Button>
+            <Button variant="outline" size="sm" disabled={exporting || loading} onClick={() => handleExport('pdf')}>
+              <FileText className="h-4 w-4 mr-1" />
+              PDF
+            </Button>
+          </>
+        }
       />
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setEditingId(null); setForm(emptyForm); } }}>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
