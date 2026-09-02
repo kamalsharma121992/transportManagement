@@ -3,9 +3,13 @@ import { formatCurrency, formatDate } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports';
 import { getTripPaymentDisplayStatus } from '@/lib/trip-payments';
 
-/** Columns needed for CSV/PDF export (lighter than select *) */
+/** Columns for CSV export */
 export const TRIP_EXPORT_SELECT =
   'date,vehicle_number,route_name,driver_name,weight_tons,distance_km,rate_per_ton,commission,total_revenue,advance_paid,balance_due,payment_status,payment_expected_date,notes,builty_url';
+
+/** Leaner columns for PDF table only */
+export const TRIP_PDF_SELECT =
+  'date,vehicle_number,route_name,driver_name,weight_tons,rate_per_ton,total_revenue,advance_paid,payment_status,payment_expected_date,notes,builty_url';
 
 export type TripExportRow = {
   date: string;
@@ -88,7 +92,7 @@ function buildBuiltyCell(url: string): string {
   return `<a href="${escapeHtml(url)}" class="builty-link">View</a>`;
 }
 
-export function printTripsPdf(params: {
+function buildTripsPdfHtml(params: {
   trips: Trip[];
   filterLabel: string;
   count: number;
@@ -97,49 +101,47 @@ export function printTripsPdf(params: {
   pendingRevenue: number;
   paidRevenue: number;
   generatedOn: string;
-}): void {
-  const popup = window.open('', '_blank', 'width=1200,height=900');
-  if (!popup) {
-    throw new Error('Allow pop-ups to download the PDF');
+}): string {
+  const rows = params.trips;
+  const parts: string[] = new Array(rows.length);
+  for (let i = 0; i < rows.length; i++) {
+    const t = rows[i];
+    const display = getTripPaymentDisplayStatus(t);
+    const due = t.payment_expected_date ? escapeHtml(formatDate(t.payment_expected_date)) : '';
+    parts[i] =
+      `<tr><td>${escapeHtml(formatDate(t.date))}</td>` +
+      `<td>${escapeHtml(t.vehicle_number)}</td>` +
+      `<td>${escapeHtml(t.route_name)}</td>` +
+      `<td>${escapeHtml(t.driver_name)}</td>` +
+      `<td class="num">${Number(t.weight_tons).toFixed(2)}</td>` +
+      `<td class="num">${escapeHtml(formatCurrency(Number(t.rate_per_ton)))}</td>` +
+      `<td class="num">${escapeHtml(formatCurrency(Number(t.total_revenue)))}</td>` +
+      `<td>${escapeHtml(display)}</td>` +
+      `<td>${due}</td>` +
+      `<td>${escapeHtml(t.notes || '')}</td>` +
+      `<td>${buildBuiltyCell(t.builty_url || '')}</td></tr>`;
   }
+  const tableRows = parts.length ? parts.join('') : '<tr><td colspan="11" class="muted">No trips</td></tr>';
 
-  const rows = toTripExportRows(params.trips);
-  const tableRows = rows.length
-    ? rows.map((r) => `
-        <tr>
-          <td>${escapeHtml(formatDate(r.date))}</td>
-          <td>${escapeHtml(r.vehicle)}</td>
-          <td>${escapeHtml(r.route)}</td>
-          <td>${escapeHtml(r.driver)}</td>
-          <td class="num">${escapeHtml(r.weight)}</td>
-          <td class="num">${escapeHtml(formatCurrency(Number(r.ratePerTon)))}</td>
-          <td class="num">${escapeHtml(formatCurrency(Number(r.totalRevenue)))}</td>
-          <td>${escapeHtml(r.paymentDisplay)}</td>
-          <td>${r.expectedDate ? escapeHtml(formatDate(r.expectedDate)) : ''}</td>
-          <td>${escapeHtml(r.notes)}</td>
-          <td>${buildBuiltyCell(r.builtyUrl)}</td>
-        </tr>`).join('')
-    : '<tr><td colspan="11" class="muted">No trips</td></tr>';
-
-  popup.document.write(`<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Trips-${escapeHtml(params.filterLabel)}</title>
   <style>
-    @page { size: A4 landscape; margin: 10mm; }
-    body { margin: 0; font: 10px/1.35 Arial, sans-serif; color: #111; }
-    h1 { font-size: 16px; margin: 0 0 4px; }
-    .meta { font-size: 10px; color: #444; margin-bottom: 10px; }
-    .summary { display: flex; flex-wrap: wrap; gap: 16px 24px; margin-bottom: 12px; font-size: 11px; }
-    .summary strong { font-size: 13px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #bbb; padding: 4px 5px; text-align: left; vertical-align: top; }
-    th { background: #f3f3f3; font-size: 9px; text-transform: uppercase; }
-    td.num, th.num { text-align: right; white-space: nowrap; }
-    .builty-link { color: #1d4ed8; text-decoration: none; white-space: nowrap; }
-    .muted { text-align: center; color: #666; }
-    @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+    @page{size:A4 landscape;margin:10mm}
+    body{margin:0;font:10px/1.35 Arial,sans-serif;color:#111}
+    h1{font-size:16px;margin:0 0 4px}
+    .meta{font-size:10px;color:#444;margin-bottom:10px}
+    .summary{display:flex;flex-wrap:wrap;gap:16px 24px;margin-bottom:12px;font-size:11px}
+    .summary strong{font-size:13px}
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #bbb;padding:3px 4px;text-align:left;vertical-align:top}
+    th{background:#f3f3f3;font-size:9px;text-transform:uppercase}
+    td.num,th.num{text-align:right;white-space:nowrap}
+    .builty-link{color:#1d4ed8;text-decoration:none;white-space:nowrap}
+    .muted{text-align:center;color:#666}
+    @media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
   </style>
 </head>
 <body>
@@ -147,7 +149,7 @@ export function printTripsPdf(params: {
   <p class="meta">${escapeHtml(params.filterLabel)} · Generated ${escapeHtml(formatDate(params.generatedOn))} · ${params.count} trip(s)</p>
   <div class="summary">
     <div>Revenue <strong>${escapeHtml(formatCurrency(params.revenue))}</strong></div>
-    <div>Weight <strong>${escapeHtml(params.weight.toFixed(2))} T</strong></div>
+    <div>Weight <strong>${params.weight.toFixed(2)} T</strong></div>
     <div>Pending <strong>${escapeHtml(formatCurrency(params.pendingRevenue))}</strong></div>
     <div>Collected <strong>${escapeHtml(formatCurrency(params.paidRevenue))}</strong></div>
   </div>
@@ -162,17 +164,49 @@ export function printTripsPdf(params: {
     <tbody>${tableRows}</tbody>
   </table>
 </body>
-</html>`);
-  popup.document.close();
-  popup.focus();
-  popup.addEventListener('afterprint', () => popup.close());
-  // Print as soon as the document is ready (faster than a fixed delay)
-  if (popup.document.readyState === 'complete') {
-    popup.print();
-  } else {
-    popup.addEventListener('load', () => popup.print());
+</html>`;
+}
+
+/** Hidden-iframe print — avoids slow popup window.open. */
+export function printTripsPdf(params: {
+  trips: Trip[];
+  filterLabel: string;
+  count: number;
+  revenue: number;
+  weight: number;
+  pendingRevenue: number;
+  paidRevenue: number;
+  generatedOn: string;
+  fileSuffix?: string;
+}): void {
+  const html = buildTripsPdfHtml(params);
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  document.body.appendChild(iframe);
+
+  let printed = false;
+  const doPrint = () => {
+    if (printed) return;
+    printed = true;
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch {
+      // ignore
+    }
     setTimeout(() => {
-      try { popup.print(); } catch { /* popup may already be printing */ }
-    }, 100);
-  }
+      URL.revokeObjectURL(url);
+      iframe.remove();
+    }, 60_000);
+  };
+
+  iframe.onload = () => {
+    requestAnimationFrame(() => setTimeout(doPrint, 50));
+  };
+  iframe.src = url;
+  setTimeout(doPrint, 1500);
 }

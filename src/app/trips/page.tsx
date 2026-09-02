@@ -53,7 +53,7 @@ import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
-import { downloadTripsCsv, printTripsPdf, tripExportSuffix, TRIP_EXPORT_SELECT } from '@/lib/trip-export';
+import { downloadTripsCsv, printTripsPdf, tripExportSuffix, TRIP_EXPORT_SELECT, TRIP_PDF_SELECT } from '@/lib/trip-export';
 import { removeTripBuiltyByUrl, uploadTripBuilty, validateBuiltyFile } from '@/lib/trip-builty';
 
 const emptyTrip: TripFormData = {
@@ -251,20 +251,43 @@ export default function TripsPage() {
     setLoading(false);
   }
 
-  async function fetchAllFilteredTrips(): Promise<Trip[]> {
+  async function fetchAllFilteredTrips(selectCols: string = TRIP_EXPORT_SELECT): Promise<Trip[]> {
+    // Already have every matching row on this page — skip network
+    if (trips.length > 0 && trips.length === totalTrips) {
+      return trips;
+    }
+
     const batchSize = 1000;
-    const all: Trip[] = [];
-    let from = 0;
-    while (true) {
-      const to = from + batchSize - 1;
+    const knownTotal = summary.count || totalTrips;
+    const batchCount = knownTotal > 0 ? Math.ceil(knownTotal / batchSize) : 1;
+
+    const fetchBatch = async (from: number, to: number) => {
       const query = applySupabaseSort(
-        applyTripFilters(supabase.from('trips').select(TRIP_EXPORT_SELECT)),
+        applyTripFilters(supabase.from('trips').select(selectCols)),
         sortColumn,
         sortDirection,
       );
       const { data, error } = await query.range(from, to);
       if (error) throw error;
-      const batch = (data || []) as Trip[];
+      return (data || []) as unknown as Trip[];
+    };
+
+    // Parallel batches when we know the total (much faster than sequential)
+    if (knownTotal > batchSize) {
+      const batches = await Promise.all(
+        Array.from({ length: batchCount }, (_, i) => {
+          const from = i * batchSize;
+          return fetchBatch(from, from + batchSize - 1);
+        }),
+      );
+      return batches.flat();
+    }
+
+    // Single (or unknown-size) sequential fetch
+    const all: Trip[] = [];
+    let from = 0;
+    while (true) {
+      const batch = await fetchBatch(from, from + batchSize - 1);
       all.push(...batch);
       if (batch.length < batchSize) break;
       from += batchSize;
@@ -275,14 +298,14 @@ export default function TripsPage() {
   async function handleExport(format: 'csv' | 'pdf') {
     setExporting(true);
     try {
-      const rows = await fetchAllFilteredTrips();
+      const selectCols = format === 'pdf' ? TRIP_PDF_SELECT : TRIP_EXPORT_SELECT;
+      const rows = await fetchAllFilteredTrips(selectCols);
       if (rows.length === 0) {
         toast.error('No trips to export');
         return;
       }
       const suffix = tripExportSuffix(filterMonth, filterDateFrom, filterDateTo);
       const filterLabel = activeFilterLabels.length > 0 ? activeFilterLabels.join(' · ') : 'All trips';
-      // Reuse page summary (same filters) — avoid re-scanning every row
       const exportSummary = {
         count: summary.count || rows.length,
         revenue: summary.revenue,
@@ -298,6 +321,7 @@ export default function TripsPage() {
           filterLabel,
           ...exportSummary,
           generatedOn: new Date().toISOString().split('T')[0],
+          fileSuffix: suffix,
         });
       }
       toast.success(`Exported ${rows.length} trip(s) as ${format.toUpperCase()}`);
