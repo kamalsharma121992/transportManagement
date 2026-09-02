@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS trips (
   payment_status TEXT NOT NULL DEFAULT 'Fully Paid',
   payment_expected_date DATE,
   notes TEXT,
+  builty_url TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

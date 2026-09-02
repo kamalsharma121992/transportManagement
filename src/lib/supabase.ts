@@ -109,6 +109,7 @@ export type Trip = {
   payment_status: TripPaymentStatus;
   payment_expected_date: string | null;
   notes: string | null;
+  builty_url: string | null;
 };
 
 export const TRIP_PAYMENT_STATUSES = ['Fully Paid', 'Pending'] as const;

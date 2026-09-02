@@ -38,7 +38,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Download } from 'lucide-react';
+import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Download, ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -54,6 +54,7 @@ import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
 import { downloadTripsCsv, printTripsPdf, tripExportSuffix } from '@/lib/trip-export';
+import { removeTripBuiltyByUrl, uploadTripBuilty, validateBuiltyFile } from '@/lib/trip-builty';
 
 const emptyTrip: TripFormData = {
   date: new Date().toISOString().split('T')[0],
@@ -70,6 +71,7 @@ const emptyTrip: TripFormData = {
   payment_status: 'Fully Paid',
   payment_expected_date: '',
   notes: '',
+  builty_url: '',
 };
 
 const SELECT_CLASS = 'w-full min-w-[120px] border rounded-md px-2 py-1.5 text-sm bg-white';
@@ -102,6 +104,13 @@ export default function TripsPage() {
   const [pdfImporting, setPdfImporting] = useState(false);
   const [parsedTrips, setParsedTrips] = useState<ParsedTripRow[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const builtyInputRef = useRef<HTMLInputElement>(null);
+  const [pendingBuiltyFile, setPendingBuiltyFile] = useState<File | null>(null);
+  const [builtyPreviewUrl, setBuiltyPreviewUrl] = useState<string | null>(null);
+  const [originalBuiltyUrl, setOriginalBuiltyUrl] = useState<string | null>(null);
+  const [builtyRemoved, setBuiltyRemoved] = useState(false);
+  const [builtyViewUrl, setBuiltyViewUrl] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -333,7 +342,17 @@ export default function TripsPage() {
     });
   }, []);
 
+  function clearBuiltySelection() {
+    if (builtyPreviewUrl) URL.revokeObjectURL(builtyPreviewUrl);
+    setPendingBuiltyFile(null);
+    setBuiltyPreviewUrl(null);
+    if (builtyInputRef.current) builtyInputRef.current.value = '';
+  }
+
   function resetFormDialog() {
+    clearBuiltySelection();
+    setOriginalBuiltyUrl(null);
+    setBuiltyRemoved(false);
     setEditingId(null);
     setForm(emptyTrip);
     setFullPending(false);
@@ -478,7 +497,7 @@ export default function TripsPage() {
     }
 
     setPdfImporting(true);
-    const payload = ready.map(({ rowId, complete, missingFields, ...trip }) => ({
+    const payload = ready.map(({ rowId, complete, missingFields, builty_url: _builty, ...trip }) => ({
       ...trip,
       payment_expected_date: trip.payment_expected_date || null,
       notes: trip.notes || null,
@@ -527,28 +546,77 @@ export default function TripsPage() {
     });
   }
 
+  function handleBuiltySelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      validateBuiltyFile(file);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Invalid builty image');
+      e.target.value = '';
+      return;
+    }
+    clearBuiltySelection();
+    setPendingBuiltyFile(file);
+    setBuiltyPreviewUrl(URL.createObjectURL(file));
+    setBuiltyRemoved(false);
+    setForm((f) => ({ ...f, builty_url: '' }));
+  }
+
+  function removeBuiltyFromForm() {
+    clearBuiltySelection();
+    if (originalBuiltyUrl || form.builty_url) setBuiltyRemoved(true);
+    setForm((f) => ({ ...f, builty_url: '' }));
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = {
-      ...form,
-      payment_expected_date:
-        form.payment_status === 'Pending' ? form.payment_expected_date || null : null,
-      notes: form.notes.trim() || null,
-    };
-    if (editingId) {
-      const { error } = await supabase.from('trips').update(payload).eq('id', editingId);
-      if (error) { toast.error(error.message); return; }
-      toast.success('Trip updated');
-    } else {
-      const { error } = await supabase.from('trips').insert(payload);
-      if (error) { toast.error(error.message); return; }
-      toast.success('Trip added');
+    setSaving(true);
+    try {
+      const payload = {
+        ...form,
+        payment_expected_date:
+          form.payment_status === 'Pending' ? form.payment_expected_date || null : null,
+        notes: form.notes.trim() || null,
+        builty_url: builtyRemoved ? null : (form.builty_url || null),
+      };
+
+      if (editingId) {
+        let builtyUrl = builtyRemoved ? null : (form.builty_url || null);
+        if (pendingBuiltyFile) {
+          builtyUrl = await uploadTripBuilty(editingId, pendingBuiltyFile);
+          if (originalBuiltyUrl && originalBuiltyUrl !== builtyUrl) {
+            await removeTripBuiltyByUrl(originalBuiltyUrl);
+          }
+        } else if (builtyRemoved && originalBuiltyUrl) {
+          await removeTripBuiltyByUrl(originalBuiltyUrl);
+        }
+        const { error } = await supabase.from('trips').update({ ...payload, builty_url: builtyUrl }).eq('id', editingId);
+        if (error) { toast.error(error.message); return; }
+        toast.success('Trip updated');
+      } else {
+        const { data, error } = await supabase.from('trips').insert(payload).select('id').single();
+        if (error) { toast.error(error.message); return; }
+        if (pendingBuiltyFile && data?.id) {
+          const builtyUrl = await uploadTripBuilty(data.id, pendingBuiltyFile);
+          const { error: updateError } = await supabase.from('trips').update({ builty_url: builtyUrl }).eq('id', data.id);
+          if (updateError) { toast.error(updateError.message); return; }
+        }
+        toast.success('Trip added');
+      }
+      resetFormDialog();
+      fetchTrips();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save trip');
+    } finally {
+      setSaving(false);
     }
-    resetFormDialog();
-    fetchTrips();
   }
 
   function startEdit(trip: Trip) {
+    clearBuiltySelection();
+    setBuiltyRemoved(false);
+    setOriginalBuiltyUrl(trip.builty_url || null);
     setEditingId(trip.id);
     const next = {
       date: trip.date,
@@ -565,6 +633,7 @@ export default function TripsPage() {
       payment_status: normalizeTripPaymentStatus(trip.payment_status),
       payment_expected_date: trip.payment_expected_date || '',
       notes: trip.notes || '',
+      builty_url: trip.builty_url || '',
     };
     setForm(next);
     setFullPending(isFullPendingAmounts(next));
@@ -573,6 +642,14 @@ export default function TripsPage() {
 
   async function handleDelete(id: number) {
     if (!confirm('Delete this trip?')) return;
+    const trip = trips.find((t) => t.id === id);
+    if (trip?.builty_url) {
+      try {
+        await removeTripBuiltyByUrl(trip.builty_url);
+      } catch {
+        // Continue deleting trip even if storage cleanup fails
+      }
+    }
     const { error } = await supabase.from('trips').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     toast.success('Trip deleted');
@@ -609,6 +686,22 @@ export default function TripsPage() {
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-800">
         <Clock className="h-3 w-3" /> Pending
       </span>
+    );
+  }
+
+  function renderBuiltyButton(trip: Trip) {
+    if (!trip.builty_url) return <span className="text-gray-300">—</span>;
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        title="View builty"
+        onClick={() => setBuiltyViewUrl(trip.builty_url!)}
+      >
+        <ImageIcon className="h-4 w-4 text-blue-600" />
+      </Button>
     );
   }
 
@@ -1160,6 +1253,50 @@ export default function TripsPage() {
                 </>
               )}
               <div className="sm:col-span-2">
+                <Label>Builty (image)</Label>
+                <input
+                  ref={builtyInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+                  className="hidden"
+                  onChange={handleBuiltySelect}
+                />
+                {(builtyPreviewUrl || (!builtyRemoved && form.builty_url)) ? (
+                  <div className="mt-1 space-y-2">
+                    <button
+                      type="button"
+                      className="block w-full max-w-xs overflow-hidden rounded-md border bg-gray-50"
+                      onClick={() => setBuiltyViewUrl(builtyPreviewUrl || form.builty_url)}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={builtyPreviewUrl || form.builty_url}
+                        alt="Builty preview"
+                        className="max-h-40 w-full object-contain"
+                      />
+                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => builtyInputRef.current?.click()}>
+                        <Upload className="h-3.5 w-3.5 mr-1" /> Replace
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={removeBuiltyFromForm}>
+                        <X className="h-3.5 w-3.5 mr-1" /> Remove
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-1 w-full sm:w-auto"
+                    onClick={() => builtyInputRef.current?.click()}
+                  >
+                    <Upload className="h-4 w-4 mr-2" /> Upload builty image
+                  </Button>
+                )}
+                <p className="text-[10px] text-gray-400 mt-1">JPEG, PNG, or WebP · max 10 MB</p>
+              </div>
+              <div className="sm:col-span-2">
                 <Label>Notes</Label>
                 <Input
                   value={form.notes}
@@ -1168,8 +1305,32 @@ export default function TripsPage() {
                 />
               </div>
             </div>
-            <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Trip</Button>
+            <Button type="submit" className="w-full" disabled={saving}>
+              {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</> : `${editingId ? 'Update' : 'Add'} Trip`}
+            </Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!builtyViewUrl} onOpenChange={(open) => { if (!open) setBuiltyViewUrl(null); }}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
+          <DialogHeader>
+            <DialogTitle>Builty</DialogTitle>
+          </DialogHeader>
+          {builtyViewUrl && (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={builtyViewUrl} alt="Builty" className="w-full max-h-[70vh] object-contain rounded-md border bg-gray-50" />
+              <a
+                href={builtyViewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Open full image in new tab
+              </a>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1258,6 +1419,19 @@ export default function TripsPage() {
                             </p>
                           </div>
                         )}
+                        {trip.builty_url && (
+                          <div className="col-span-2">
+                            <p className="text-[10px] uppercase text-gray-500">Builty</p>
+                            <button
+                              type="button"
+                              className="mt-1 block max-w-[200px] overflow-hidden rounded border"
+                              onClick={(e) => { e.stopPropagation(); setBuiltyViewUrl(trip.builty_url!); }}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={trip.builty_url} alt="Builty" className="max-h-28 w-full object-contain bg-gray-50" />
+                            </button>
+                          </div>
+                        )}
                         {trip.notes && (
                           <div className="col-span-2">
                             <p className="text-[10px] uppercase text-gray-500">Notes</p>
@@ -1319,6 +1493,7 @@ export default function TripsPage() {
                   <TableHead className="text-right">Rate/Ton</TableHead>
                   <SortableTableHead label="Total Revenue" column="total_revenue" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
                   <TableHead>Payment</TableHead>
+                  <TableHead>Builty</TableHead>
                   <TableHead>Notes</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
@@ -1326,11 +1501,11 @@ export default function TripsPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8">Loading...</TableCell>
+                    <TableCell colSpan={11} className="text-center py-8">Loading...</TableCell>
                   </TableRow>
                 ) : trips.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8 text-gray-500">No trips found</TableCell>
+                    <TableCell colSpan={11} className="text-center py-8 text-gray-500">No trips found</TableCell>
                   </TableRow>
                 ) : (
                   trips.map((trip) => {
@@ -1358,6 +1533,7 @@ export default function TripsPage() {
                           )}
                         </div>
                       </TableCell>
+                      <TableCell>{renderBuiltyButton(trip)}</TableCell>
                       <TableCell className="max-w-[180px] text-sm text-gray-600 truncate" title={trip.notes || undefined}>
                         {trip.notes || '—'}
                       </TableCell>
