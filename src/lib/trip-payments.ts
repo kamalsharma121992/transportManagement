@@ -75,3 +75,45 @@ export function normalizeTripPaymentStatus(status: string | null | undefined): T
   if (status === 'Fully Paid') return 'Fully Paid';
   return 'Pending';
 }
+
+/** Apply multi-select payment display filters to a Supabase query. */
+export function applyTripPaymentDisplayFilter<Q>(query: Q, selected: readonly string[]): Q {
+  const filters = selected.filter((s): s is TripPaymentDisplayStatus =>
+    (TRIP_PAYMENT_DISPLAY_FILTERS as readonly string[]).includes(s));
+  if (filters.length === 0 || filters.length === TRIP_PAYMENT_DISPLAY_FILTERS.length) {
+    return query;
+  }
+
+  type FilterQuery = {
+    eq: (col: string, val: string | number) => FilterQuery;
+    gt: (col: string, val: number) => FilterQuery;
+    or: (filter: string) => FilterQuery;
+  };
+  const q = query as FilterQuery;
+
+  const hasFullyPaid = filters.includes('Fully Paid');
+  const hasPending = filters.includes('Pending');
+  const hasPartial = filters.includes('Partial Pending');
+
+  if (filters.length === 1) {
+    if (hasFullyPaid) return q.eq('payment_status', 'Fully Paid') as Q;
+    if (hasPending) return q.eq('payment_status', 'Pending').eq('advance_paid', 0) as Q;
+    if (hasPartial) return q.eq('payment_status', 'Pending').gt('advance_paid', 0) as Q;
+  }
+
+  if (hasPending && hasPartial && !hasFullyPaid) {
+    return q.eq('payment_status', 'Pending') as Q;
+  }
+
+  const clauses: string[] = [];
+  if (hasFullyPaid) clauses.push('payment_status.eq."Fully Paid"');
+  if (hasPending && hasPartial) {
+    clauses.push('payment_status.eq."Pending"');
+  } else if (hasPending) {
+    clauses.push('and(payment_status.eq."Pending",advance_paid.eq.0)');
+  } else if (hasPartial) {
+    clauses.push('and(payment_status.eq."Pending",advance_paid.gt.0)');
+  }
+
+  return clauses.length > 0 ? (q.or(clauses.join(',')) as Q) : query;
+}

@@ -17,6 +17,7 @@ import {
   isTripPaymentOverdue,
   isTripUnpaid,
   normalizeTripPaymentStatus,
+  applyTripPaymentDisplayFilter,
 } from '@/lib/trip-payments';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -37,7 +38,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
+import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -52,6 +53,7 @@ import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
+import { downloadTripsCsv, printTripsPdf, tripExportSuffix } from '@/lib/trip-export';
 
 const emptyTrip: TripFormData = {
   date: new Date().toISOString().split('T')[0],
@@ -103,6 +105,7 @@ export default function TripsPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [filterMonth, setFilterMonth] = useState(currentMonth);
@@ -111,13 +114,13 @@ export default function TripsPage() {
   const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
   const [filterRoutes, setFilterRoutes] = useState<string[]>([]);
   const [filterDrivers, setFilterDrivers] = useState<string[]>([]);
-  const [filterPaymentStatus, setFilterPaymentStatus] = useState('');
+  const [filterPaymentStatuses, setFilterPaymentStatuses] = useState<string[]>([]);
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput);
   const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
   const [summary, setSummary] = useState({ count: 0, revenue: 0, weight: 0, pendingRevenue: 0, paidRevenue: 0 });
 
-  const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || filterVehicles.length > 0 || filterRoutes.length > 0 || filterDrivers.length > 0 || !!filterPaymentStatus || !!searchQuery;
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || filterVehicles.length > 0 || filterRoutes.length > 0 || filterDrivers.length > 0 || filterPaymentStatuses.length > 0 || !!searchQuery;
 
   function clearFilters() {
     setFilterMonth(currentMonth);
@@ -126,7 +129,7 @@ export default function TripsPage() {
     setFilterVehicles([]);
     setFilterRoutes([]);
     setFilterDrivers([]);
-    setFilterPaymentStatus('');
+    setFilterPaymentStatuses([]);
     setSearchInput('');
   }
 
@@ -151,7 +154,10 @@ export default function TripsPage() {
     const label = formatMultiFilterLabel('Driver', filterDrivers);
     if (label) activeFilterLabels.push(label);
   }
-  if (filterPaymentStatus) activeFilterLabels.push('Payment: ' + filterPaymentStatus);
+  if (filterPaymentStatuses.length > 0) {
+    const label = formatMultiFilterLabel('Payment', filterPaymentStatuses);
+    if (label) activeFilterLabels.push(label);
+  }
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   const {
@@ -163,7 +169,7 @@ export default function TripsPage() {
     setTotalItems: setTotalTrips,
     totalPages,
   } = useServerPagination([
-    filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, filterPaymentStatus, searchQuery,
+    filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, filterPaymentStatuses, searchQuery,
     sortColumn, sortDirection,
   ]);
 
@@ -179,13 +185,7 @@ export default function TripsPage() {
     q = applyInFilter(q, 'vehicle_number', filterVehicles);
     q = applyInFilter(q, 'route_name', filterRoutes);
     q = applyInFilter(q, 'driver_name', filterDrivers);
-    if (filterPaymentStatus === 'Fully Paid') {
-      q = q.eq('payment_status', 'Fully Paid');
-    } else if (filterPaymentStatus === 'Pending') {
-      q = q.eq('payment_status', 'Pending').eq('advance_paid', 0);
-    } else if (filterPaymentStatus === 'Partial Pending') {
-      q = q.eq('payment_status', 'Pending').gt('advance_paid', 0);
-    }
+    q = applyTripPaymentDisplayFilter(q, filterPaymentStatuses);
     if (filterMonth) {
       const { from, to } = getMonthDateRange(filterMonth);
       q = q.gte('date', from).lte('date', to);
@@ -242,10 +242,72 @@ export default function TripsPage() {
     setLoading(false);
   }
 
+  async function fetchAllFilteredTrips(): Promise<Trip[]> {
+    const batchSize = 1000;
+    const all: Trip[] = [];
+    let from = 0;
+    while (true) {
+      const to = from + batchSize - 1;
+      const query = applySupabaseSort(
+        applyTripFilters(supabase.from('trips').select('*')),
+        sortColumn,
+        sortDirection,
+      );
+      const { data, error } = await query.range(from, to);
+      if (error) throw error;
+      const batch = (data || []) as Trip[];
+      all.push(...batch);
+      if (batch.length < batchSize) break;
+      from += batchSize;
+    }
+    return all;
+  }
+
+  async function handleExport(format: 'csv' | 'pdf') {
+    setExporting(true);
+    try {
+      const rows = await fetchAllFilteredTrips();
+      if (rows.length === 0) {
+        toast.error('No trips to export');
+        return;
+      }
+      const suffix = tripExportSuffix(filterMonth, filterDateFrom, filterDateTo);
+      const filterLabel = activeFilterLabels.length > 0 ? activeFilterLabels.join(' · ') : 'All trips';
+      const exportSummary = {
+        count: rows.length,
+        revenue: rows.reduce((s, t) => s + Number(t.total_revenue), 0),
+        weight: rows.reduce((s, t) => s + Number(t.weight_tons), 0),
+        pendingRevenue: rows.reduce((s, t) => (
+          isTripUnpaid(t.payment_status) ? s + Number(t.balance_due || 0) : s
+        ), 0),
+        paidRevenue: rows.reduce((s, t) => (
+          t.payment_status === 'Fully Paid'
+            ? s + Number(t.total_revenue)
+            : s + Number(t.advance_paid || 0)
+        ), 0),
+      };
+      if (format === 'csv') {
+        downloadTripsCsv(rows, suffix);
+      } else {
+        printTripsPdf({
+          trips: rows,
+          filterLabel,
+          ...exportSummary,
+          generatedOn: new Date().toISOString().split('T')[0],
+        });
+      }
+      toast.success(`Exported ${rows.length} trip(s) as ${format.toUpperCase()}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   useEffect(() => {
     setExpandedId(null);
     fetchTrips();
-  }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, filterPaymentStatus, searchQuery, sortColumn, sortDirection]);
+  }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, filterPaymentStatuses, searchQuery, sortColumn, sortDirection]);
 
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
@@ -586,6 +648,14 @@ export default function TripsPage() {
         clearFiltersLabel="Reset filters"
         actions={
           <>
+            <Button variant="outline" size="sm" disabled={exporting || loading} onClick={() => handleExport('csv')}>
+              <Download className="h-4 w-4 mr-1" />
+              CSV
+            </Button>
+            <Button variant="outline" size="sm" disabled={exporting || loading} onClick={() => handleExport('pdf')}>
+              <FileText className="h-4 w-4 mr-1" />
+              PDF
+            </Button>
             <input
               ref={fileInputRef}
               type="file"
@@ -732,19 +802,14 @@ export default function TripsPage() {
                   placeholder="All drivers"
                   searchPlaceholder="Search driver..."
                 />
-                <div className="min-w-0">
-                  <label className="text-xs text-gray-500 mb-1 block">Payment</label>
-                  <select
-                    className={FILTER_SELECT_CLASS}
-                    value={filterPaymentStatus}
-                    onChange={(e) => setFilterPaymentStatus(e.target.value)}
-                  >
-                    <option value="">All</option>
-                    {TRIP_PAYMENT_DISPLAY_FILTERS.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
+                <MultiSelectFilter
+                  label="Payment"
+                  options={[...TRIP_PAYMENT_DISPLAY_FILTERS]}
+                  selected={filterPaymentStatuses}
+                  onChange={setFilterPaymentStatuses}
+                  placeholder="All payments"
+                  searchPlaceholder="Search payment..."
+                />
               </div>
             </CardContent>
           </Card>
