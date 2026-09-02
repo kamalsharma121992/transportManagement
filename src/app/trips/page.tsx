@@ -53,7 +53,7 @@ import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
-import { downloadTripsCsv, printTripsPdf, tripExportSuffix } from '@/lib/trip-export';
+import { downloadTripsCsv, printTripsPdf, tripExportSuffix, TRIP_EXPORT_SELECT } from '@/lib/trip-export';
 import { removeTripBuiltyByUrl, uploadTripBuilty, validateBuiltyFile } from '@/lib/trip-builty';
 
 const emptyTrip: TripFormData = {
@@ -258,7 +258,7 @@ export default function TripsPage() {
     while (true) {
       const to = from + batchSize - 1;
       const query = applySupabaseSort(
-        applyTripFilters(supabase.from('trips').select('*')),
+        applyTripFilters(supabase.from('trips').select(TRIP_EXPORT_SELECT)),
         sortColumn,
         sortDirection,
       );
@@ -282,18 +282,13 @@ export default function TripsPage() {
       }
       const suffix = tripExportSuffix(filterMonth, filterDateFrom, filterDateTo);
       const filterLabel = activeFilterLabels.length > 0 ? activeFilterLabels.join(' · ') : 'All trips';
+      // Reuse page summary (same filters) — avoid re-scanning every row
       const exportSummary = {
-        count: rows.length,
-        revenue: rows.reduce((s, t) => s + Number(t.total_revenue), 0),
-        weight: rows.reduce((s, t) => s + Number(t.weight_tons), 0),
-        pendingRevenue: rows.reduce((s, t) => (
-          isTripUnpaid(t.payment_status) ? s + Number(t.balance_due || 0) : s
-        ), 0),
-        paidRevenue: rows.reduce((s, t) => (
-          t.payment_status === 'Fully Paid'
-            ? s + Number(t.total_revenue)
-            : s + Number(t.advance_paid || 0)
-        ), 0),
+        count: summary.count || rows.length,
+        revenue: summary.revenue,
+        weight: summary.weight,
+        pendingRevenue: summary.pendingRevenue,
+        paidRevenue: summary.paidRevenue,
       };
       if (format === 'csv') {
         downloadTripsCsv(rows, suffix);

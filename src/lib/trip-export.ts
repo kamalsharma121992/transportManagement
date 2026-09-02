@@ -3,6 +3,10 @@ import { formatCurrency, formatDate } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports';
 import { getTripPaymentDisplayStatus } from '@/lib/trip-payments';
 
+/** Columns needed for CSV/PDF export (lighter than select *) */
+export const TRIP_EXPORT_SELECT =
+  'date,vehicle_number,route_name,driver_name,weight_tons,distance_km,rate_per_ton,commission,total_revenue,advance_paid,balance_due,payment_status,payment_expected_date,notes,builty_url';
+
 export type TripExportRow = {
   date: string;
   vehicle: string;
@@ -19,12 +23,13 @@ export type TripExportRow = {
   paymentDisplay: string;
   expectedDate: string;
   notes: string;
+  builtyUrl: string;
 };
 
 const CSV_HEADERS = [
   'Date', 'Vehicle', 'Route', 'Driver', 'Weight (T)', 'Distance (km)', 'Rate/Ton',
   'Commission', 'Total Revenue', 'Advance Paid', 'Balance Due', 'Payment Status',
-  'Payment', 'Expected Date', 'Notes',
+  'Payment', 'Expected Date', 'Notes', 'Builty URL',
 ] as const;
 
 function escapeHtml(value: string): string {
@@ -62,6 +67,7 @@ export function toTripExportRows(trips: Trip[]): TripExportRow[] {
     paymentDisplay: getTripPaymentDisplayStatus(trip),
     expectedDate: trip.payment_expected_date || '',
     notes: trip.notes || '',
+    builtyUrl: trip.builty_url || '',
   }));
 }
 
@@ -72,9 +78,14 @@ export function downloadTripsCsv(trips: Trip[], suffix: string): void {
     ...rows.map((r) => [
       r.date, r.vehicle, r.route, r.driver, r.weight, r.distance, r.ratePerTon,
       r.commission, r.totalRevenue, r.advancePaid, r.balanceDue, r.paymentStatus,
-      r.paymentDisplay, r.expectedDate, r.notes,
+      r.paymentDisplay, r.expectedDate, r.notes, r.builtyUrl,
     ]),
   ]);
+}
+
+function buildBuiltyCell(url: string): string {
+  if (!url) return '';
+  return `<a href="${escapeHtml(url)}" class="builty-link">View</a>`;
 }
 
 export function printTripsPdf(params: {
@@ -106,8 +117,9 @@ export function printTripsPdf(params: {
           <td>${escapeHtml(r.paymentDisplay)}</td>
           <td>${r.expectedDate ? escapeHtml(formatDate(r.expectedDate)) : ''}</td>
           <td>${escapeHtml(r.notes)}</td>
+          <td>${buildBuiltyCell(r.builtyUrl)}</td>
         </tr>`).join('')
-    : '<tr><td colspan="10" class="muted">No trips</td></tr>';
+    : '<tr><td colspan="11" class="muted">No trips</td></tr>';
 
   popup.document.write(`<!DOCTYPE html>
 <html lang="en">
@@ -125,6 +137,7 @@ export function printTripsPdf(params: {
     th, td { border: 1px solid #bbb; padding: 4px 5px; text-align: left; vertical-align: top; }
     th { background: #f3f3f3; font-size: 9px; text-transform: uppercase; }
     td.num, th.num { text-align: right; white-space: nowrap; }
+    .builty-link { color: #1d4ed8; text-decoration: none; white-space: nowrap; }
     .muted { text-align: center; color: #666; }
     @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
   </style>
@@ -143,7 +156,7 @@ export function printTripsPdf(params: {
       <tr>
         <th>Date</th><th>Vehicle</th><th>Route</th><th>Driver</th>
         <th class="num">Weight</th><th class="num">Rate/Ton</th><th class="num">Revenue</th>
-        <th>Payment</th><th>Due</th><th>Notes</th>
+        <th>Payment</th><th>Due</th><th>Notes</th><th>Builty</th>
       </tr>
     </thead>
     <tbody>${tableRows}</tbody>
@@ -153,5 +166,13 @@ export function printTripsPdf(params: {
   popup.document.close();
   popup.focus();
   popup.addEventListener('afterprint', () => popup.close());
-  setTimeout(() => popup.print(), 250);
+  // Print as soon as the document is ready (faster than a fixed delay)
+  if (popup.document.readyState === 'complete') {
+    popup.print();
+  } else {
+    popup.addEventListener('load', () => popup.print());
+    setTimeout(() => {
+      try { popup.print(); } catch { /* popup may already be printing */ }
+    }, 100);
+  }
 }
