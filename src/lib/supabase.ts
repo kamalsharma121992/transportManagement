@@ -133,6 +133,7 @@ export type Expense = {
   payment_source: string | null;
   card_id: number | null;
   expense_advance_id: number | null;
+  image_url: string | null;
 };
 
 export type CreditCard = {

@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   status TEXT DEFAULT 'Paid',
   payment_source TEXT DEFAULT 'Partner',
   card_id INTEGER REFERENCES credit_cards(id),
+  image_url TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
