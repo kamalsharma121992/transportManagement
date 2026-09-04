@@ -53,7 +53,7 @@ import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
-import { downloadTripsCsv, printTripsPdf, tripExportSuffix, TRIP_EXPORT_SELECT, TRIP_PDF_SELECT } from '@/lib/trip-export';
+import { downloadTripsCsv, printTripsPdf, tripExportSuffix, tripExportTotals, TRIP_EXPORT_SELECT, TRIP_PDF_SELECT } from '@/lib/trip-export';
 import { removeTripBuiltyByUrl, uploadTripBuilty, validateBuiltyFile } from '@/lib/trip-builty';
 
 const emptyTrip: TripFormData = {
@@ -115,6 +115,7 @@ export default function TripsPage() {
   const [showSummary, setShowSummary] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [selectedMap, setSelectedMap] = useState<Record<number, Trip>>({});
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [filterMonth, setFilterMonth] = useState(currentMonth);
@@ -295,24 +296,44 @@ export default function TripsPage() {
     return all;
   }
 
-  async function handleExport(format: 'csv' | 'pdf') {
+  async function handleExport(format: 'csv' | 'pdf', scope: 'filtered' | 'selected' = 'filtered') {
     setExporting(true);
     try {
-      const selectCols = format === 'pdf' ? TRIP_PDF_SELECT : TRIP_EXPORT_SELECT;
-      const rows = await fetchAllFilteredTrips(selectCols);
-      if (rows.length === 0) {
-        toast.error('No trips to export');
-        return;
+      let rows: Trip[];
+      let filterLabel: string;
+      let suffix: string;
+      let exportSummary: ReturnType<typeof tripExportTotals>;
+
+      if (scope === 'selected') {
+        rows = Object.values(selectedMap);
+        if (rows.length === 0) {
+          toast.error('Select at least one trip to export');
+          return;
+        }
+        filterLabel = `Selected (${rows.length})`;
+        suffix = `selected-${rows.length}`;
+        exportSummary = tripExportTotals(rows);
+      } else {
+        const selectCols = format === 'pdf' ? TRIP_PDF_SELECT : TRIP_EXPORT_SELECT;
+        rows = await fetchAllFilteredTrips(selectCols);
+        if (rows.length === 0) {
+          toast.error('No trips to export');
+          return;
+        }
+        suffix = tripExportSuffix(filterMonth, filterDateFrom, filterDateTo);
+        filterLabel = activeFilterLabels.length > 0 ? activeFilterLabels.join(' · ') : 'All trips';
+        // Prefer page summary for full filtered export; recompute if row count differs
+        exportSummary = (summary.count && summary.count === rows.length)
+          ? {
+              count: summary.count,
+              revenue: summary.revenue,
+              weight: summary.weight,
+              pendingRevenue: summary.pendingRevenue,
+              paidRevenue: summary.paidRevenue,
+            }
+          : tripExportTotals(rows);
       }
-      const suffix = tripExportSuffix(filterMonth, filterDateFrom, filterDateTo);
-      const filterLabel = activeFilterLabels.length > 0 ? activeFilterLabels.join(' · ') : 'All trips';
-      const exportSummary = {
-        count: summary.count || rows.length,
-        revenue: summary.revenue,
-        weight: summary.weight,
-        pendingRevenue: summary.pendingRevenue,
-        paidRevenue: summary.paidRevenue,
-      };
+
       if (format === 'csv') {
         downloadTripsCsv(rows, suffix);
       } else {
@@ -332,10 +353,47 @@ export default function TripsPage() {
     }
   }
 
+  function toggleSelect(trip: Trip) {
+    setSelectedMap((prev) => {
+      if (prev[trip.id]) {
+        const next = { ...prev };
+        delete next[trip.id];
+        return next;
+      }
+      return { ...prev, [trip.id]: trip };
+    });
+  }
+
+  const selectedIds = Object.keys(selectedMap).map(Number);
+  const selectedCount = selectedIds.length;
+  const selectedRevenue = selectedIds.reduce((sum, id) => sum + Number(selectedMap[id]?.total_revenue || 0), 0);
+  const allOnPageSelected =
+    trips.length > 0 && trips.every((t) => selectedMap[t.id]);
+
+  function toggleSelectAllOnPage() {
+    if (allOnPageSelected) {
+      setSelectedMap((prev) => {
+        const next = { ...prev };
+        for (const t of trips) delete next[t.id];
+        return next;
+      });
+    } else {
+      setSelectedMap((prev) => {
+        const next = { ...prev };
+        for (const t of trips) next[t.id] = t;
+        return next;
+      });
+    }
+  }
+
   useEffect(() => {
     setExpandedId(null);
     fetchTrips();
   }, [page, pageSize, filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, filterPaymentStatuses, searchQuery, sortColumn, sortDirection]);
+
+  useEffect(() => {
+    setSelectedMap({});
+  }, [filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterRoutes, filterDrivers, filterPaymentStatuses, searchQuery]);
 
   useEffect(() => {
     supabase.from('vehicles').select('vehicle_number').then(({ data }) => {
@@ -760,11 +818,23 @@ export default function TripsPage() {
         clearFiltersLabel="Reset filters"
         actions={
           <>
-            <Button variant="outline" size="sm" disabled={exporting || loading} onClick={() => handleExport('csv')}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exporting || loading}
+              onClick={() => handleExport('csv', 'filtered')}
+              title="Export all filtered trips"
+            >
               <Download className="h-4 w-4 mr-1" />
               CSV
             </Button>
-            <Button variant="outline" size="sm" disabled={exporting || loading} onClick={() => handleExport('pdf')}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exporting || loading}
+              onClick={() => handleExport('pdf', 'filtered')}
+              title="Export all filtered trips"
+            >
               <FileText className="h-4 w-4 mr-1" />
               PDF
             </Button>
@@ -786,6 +856,35 @@ export default function TripsPage() {
           </>
         }
       />
+
+      {selectedCount > 0 && (
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 sm:px-4">
+          <span className="text-sm font-medium text-blue-900">
+            {selectedCount} selected · {formatCurrency(selectedRevenue)}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exporting}
+            onClick={() => handleExport('csv', 'selected')}
+          >
+            <Download className="h-4 w-4 mr-1" />
+            CSV
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exporting}
+            onClick={() => handleExport('pdf', 'selected')}
+          >
+            <FileText className="h-4 w-4 mr-1" />
+            PDF
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelectedMap({})}>
+            Clear
+          </Button>
+        </div>
+      )}
 
       <ActiveFiltersBar
         labels={activeFilterLabels}
@@ -1368,17 +1467,26 @@ export default function TripsPage() {
             const expanded = expandedId === trip.id;
             const overdue = isTripPaymentOverdue(trip);
             const pending = isTripUnpaid(trip.payment_status);
+            const selected = !!selectedMap[trip.id];
             return (
               <Card
                 key={trip.id}
-                className={paymentHighlightClass(trip)}
+                className={cn(paymentHighlightClass(trip), selected && 'border-blue-300 ring-1 ring-blue-200')}
               >
                 <CardContent className="p-0">
-                  <button
-                    type="button"
-                    className="w-full text-left p-4 space-y-2"
-                    onClick={() => setExpandedId(expanded ? null : trip.id)}
-                  >
+                  <div className="flex items-start gap-2 p-4 pb-0">
+                    <input
+                      type="checkbox"
+                      className="mt-1 rounded border-gray-300 shrink-0"
+                      checked={selected}
+                      onChange={() => toggleSelect(trip)}
+                      aria-label={`Select trip ${trip.id}`}
+                    />
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left space-y-2 pb-4"
+                      onClick={() => setExpandedId(expanded ? null : trip.id)}
+                    >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-base truncate">
@@ -1401,7 +1509,8 @@ export default function TripsPage() {
                       <span>{expanded ? 'Hide details' : 'Tap for details'}</span>
                       {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                     </div>
-                  </button>
+                    </button>
+                  </div>
 
                   {expanded && (
                     <div className="border-t px-4 py-3 space-y-2 bg-gray-50/80">
@@ -1504,6 +1613,16 @@ export default function TripsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      checked={allOnPageSelected}
+                      onChange={toggleSelectAllOnPage}
+                      disabled={trips.length === 0}
+                      aria-label="Select all on page"
+                      className="rounded border-gray-300"
+                    />
+                  </TableHead>
                   <SortableTableHead label="Date" column="date" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} />
                   <TableHead>Vehicle</TableHead>
                   <TableHead>Route</TableHead>
@@ -1520,21 +1639,31 @@ export default function TripsPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center py-8">Loading...</TableCell>
+                    <TableCell colSpan={12} className="text-center py-8">Loading...</TableCell>
                   </TableRow>
                 ) : trips.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center py-8 text-gray-500">No trips found</TableCell>
+                    <TableCell colSpan={12} className="text-center py-8 text-gray-500">No trips found</TableCell>
                   </TableRow>
                 ) : (
                   trips.map((trip) => {
                     const overdue = isTripPaymentOverdue(trip);
                     const pending = isTripUnpaid(trip.payment_status);
+                    const selected = !!selectedMap[trip.id];
                     return (
                     <TableRow
                       key={trip.id}
-                      className={paymentRowClass(trip)}
+                      className={cn(paymentRowClass(trip), selected && 'ring-1 ring-inset ring-blue-300')}
                     >
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleSelect(trip)}
+                          aria-label={`Select trip ${trip.id}`}
+                          className="rounded border-gray-300"
+                        />
+                      </TableCell>
                       <TableCell>{formatDate(trip.date)}</TableCell>
                       <TableCell><Badge variant="outline">{trip.vehicle_number}</Badge></TableCell>
                       <TableCell>{trip.route_name}</TableCell>

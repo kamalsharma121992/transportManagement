@@ -47,7 +47,7 @@ import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
-import { downloadExpensesCsv, expenseExportSuffix, printExpensesPdf } from '@/lib/expense-export';
+import { downloadExpensesCsv, expenseExportSuffix, expenseExportTotals, printExpensesPdf } from '@/lib/expense-export';
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -115,6 +115,7 @@ export default function ExpensesPage() {
   const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
   const [imageRemoved, setImageRemoved] = useState(false);
   const [imageViewUrl, setImageViewUrl] = useState<string | null>(null);
+  const [selectedMap, setSelectedMap] = useState<Record<number, Expense>>({});
 
   // Filters — default to current month
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -227,21 +228,32 @@ export default function ExpensesPage() {
     return all;
   }
 
-  async function handleExport(format: 'csv' | 'pdf') {
+  async function handleExport(format: 'csv' | 'pdf', scope: 'filtered' | 'selected' = 'filtered') {
     setExporting(true);
     try {
-      const rows = await fetchAllFilteredExpenses();
-      if (rows.length === 0) {
-        toast.error('No expenses to export');
-        return;
+      let rows: Expense[];
+      let filterLabel: string;
+      let suffix: string;
+
+      if (scope === 'selected') {
+        rows = Object.values(selectedMap);
+        if (rows.length === 0) {
+          toast.error('Select at least one expense to export');
+          return;
+        }
+        filterLabel = `Selected (${rows.length})`;
+        suffix = `selected-${rows.length}`;
+      } else {
+        rows = await fetchAllFilteredExpenses();
+        if (rows.length === 0) {
+          toast.error('No expenses to export');
+          return;
+        }
+        suffix = expenseExportSuffix(filterMonth, filterDateFrom, filterDateTo);
+        filterLabel = activeFilterLabels.length > 0 ? activeFilterLabels.join(' · ') : 'All expenses';
       }
-      const suffix = expenseExportSuffix(filterMonth, filterDateFrom, filterDateTo);
-      const filterLabel = activeFilterLabels.length > 0 ? activeFilterLabels.join(' · ') : 'All expenses';
-      const totals = {
-        total: rows.reduce((s, e) => s + Number(e.amount), 0),
-        jmTotal: rows.filter((e) => e.paid_by === 'JM transport').reduce((s, e) => s + Number(e.amount), 0),
-        maheshTotal: rows.filter((e) => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0),
-      };
+
+      const totals = expenseExportTotals(rows);
       if (format === 'csv') {
         downloadExpensesCsv(rows, suffix);
       } else {
@@ -257,6 +269,39 @@ export default function ExpensesPage() {
       toast.error(e instanceof Error ? e.message : 'Export failed');
     } finally {
       setExporting(false);
+    }
+  }
+
+  function toggleSelect(exp: Expense) {
+    setSelectedMap((prev) => {
+      if (prev[exp.id]) {
+        const next = { ...prev };
+        delete next[exp.id];
+        return next;
+      }
+      return { ...prev, [exp.id]: exp };
+    });
+  }
+
+  const selectedIds = Object.keys(selectedMap).map(Number);
+  const selectedCount = selectedIds.length;
+  const selectedTotal = selectedIds.reduce((sum, id) => sum + Number(selectedMap[id]?.amount || 0), 0);
+  const allOnPageSelected =
+    expenses.length > 0 && expenses.every((e) => selectedMap[e.id]);
+
+  function toggleSelectAllOnPage() {
+    if (allOnPageSelected) {
+      setSelectedMap((prev) => {
+        const next = { ...prev };
+        for (const e of expenses) delete next[e.id];
+        return next;
+      });
+    } else {
+      setSelectedMap((prev) => {
+        const next = { ...prev };
+        for (const e of expenses) next[e.id] = e;
+        return next;
+      });
     }
   }
 
@@ -314,6 +359,10 @@ export default function ExpensesPage() {
     setExpandedId(null);
     fetchExpenses();
   }, [page, pageSize, filterType, filterVehicles, filterCategories, filterPersons, filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
+
+  useEffect(() => {
+    setSelectedMap({});
+  }, [filterType, filterVehicles, filterCategories, filterPersons, filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterDateFrom, filterDateTo, filterMonth, searchQuery]);
 
   useEffect(() => {
     if (searchParams.get('add') === '1') {
@@ -603,17 +652,58 @@ export default function ExpensesPage() {
         onClearFilters={clearFilters}
         actions={
           <>
-            <Button variant="outline" size="sm" disabled={exporting || loading} onClick={() => handleExport('csv')}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exporting || loading}
+              onClick={() => handleExport('csv', 'filtered')}
+              title="Export all filtered expenses"
+            >
               <Download className="h-4 w-4 mr-1" />
               CSV
             </Button>
-            <Button variant="outline" size="sm" disabled={exporting || loading} onClick={() => handleExport('pdf')}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exporting || loading}
+              onClick={() => handleExport('pdf', 'filtered')}
+              title="Export all filtered expenses"
+            >
               <FileText className="h-4 w-4 mr-1" />
               PDF
             </Button>
           </>
         }
       />
+
+      {selectedCount > 0 && (
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 sm:px-4">
+          <span className="text-sm font-medium text-blue-900">
+            {selectedCount} selected · {formatCurrency(selectedTotal)}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exporting}
+            onClick={() => handleExport('csv', 'selected')}
+          >
+            <Download className="h-4 w-4 mr-1" />
+            CSV
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exporting}
+            onClick={() => handleExport('pdf', 'selected')}
+          >
+            <FileText className="h-4 w-4 mr-1" />
+            PDF
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelectedMap({})}>
+            Clear
+          </Button>
+        </div>
+      )}
         <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) closeExpenseDialog(); else setDialogOpen(true); }}>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
             <DialogHeader>
@@ -998,14 +1088,23 @@ export default function ExpensesPage() {
         ) : (
           expenses.map((exp) => {
             const expanded = expandedId === exp.id;
+            const selected = !!selectedMap[exp.id];
             return (
-              <Card key={exp.id}>
+              <Card key={exp.id} className={selected ? 'border-blue-300 bg-blue-50/30' : undefined}>
                 <CardContent className="p-0">
-                  <button
-                    type="button"
-                    className="w-full text-left p-4 space-y-2"
-                    onClick={() => setExpandedId(expanded ? null : exp.id)}
-                  >
+                  <div className="flex items-start gap-2 p-4 pb-0">
+                    <input
+                      type="checkbox"
+                      className="mt-1 rounded border-gray-300 shrink-0"
+                      checked={selected}
+                      onChange={() => toggleSelect(exp)}
+                      aria-label={`Select expense ${exp.id}`}
+                    />
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left space-y-2 pb-4"
+                      onClick={() => setExpandedId(expanded ? null : exp.id)}
+                    >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-base truncate">
@@ -1038,7 +1137,8 @@ export default function ExpensesPage() {
                       <span>{expanded ? 'Hide details' : 'Tap for details'}</span>
                       {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                     </div>
-                  </button>
+                    </button>
+                  </div>
 
                   {expanded && (
                     <div className="border-t px-4 py-3 space-y-2 bg-gray-50/80">
@@ -1139,6 +1239,16 @@ export default function ExpensesPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      checked={allOnPageSelected}
+                      onChange={toggleSelectAllOnPage}
+                      disabled={expenses.length === 0}
+                      aria-label="Select all on page"
+                      className="rounded border-gray-300"
+                    />
+                  </TableHead>
                   <SortableTableHead label="Date" column="date" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} />
                   <TableHead>Type</TableHead>
                   <TableHead>Vehicle</TableHead>
@@ -1155,12 +1265,21 @@ export default function ExpensesPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={12} className="text-center py-8">Loading...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={13} className="text-center py-8">Loading...</TableCell></TableRow>
                 ) : expenses.length === 0 ? (
-                  <TableRow><TableCell colSpan={12} className="text-center py-8 text-gray-500">No expenses found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={13} className="text-center py-8 text-gray-500">No expenses found</TableCell></TableRow>
                 ) : (
                   expenses.map((exp) => (
-                    <TableRow key={exp.id}>
+                    <TableRow key={exp.id} className={selectedMap[exp.id] ? 'bg-blue-50/40' : undefined}>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={!!selectedMap[exp.id]}
+                          onChange={() => toggleSelect(exp)}
+                          aria-label={`Select expense ${exp.id}`}
+                          className="rounded border-gray-300"
+                        />
+                      </TableCell>
                       <TableCell className="whitespace-nowrap">{formatDate(exp.date)}</TableCell>
                       <TableCell>
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${typeColors[exp.expense_type]}`}>

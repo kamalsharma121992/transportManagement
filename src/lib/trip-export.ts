@@ -1,7 +1,7 @@
 import type { Trip } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports';
-import { getTripPaymentDisplayStatus } from '@/lib/trip-payments';
+import { getTripPaymentDisplayStatus, isTripUnpaid } from '@/lib/trip-payments';
 
 /** Columns for CSV export */
 export const TRIP_EXPORT_SELECT =
@@ -9,7 +9,7 @@ export const TRIP_EXPORT_SELECT =
 
 /** Leaner columns for PDF table only */
 export const TRIP_PDF_SELECT =
-  'date,vehicle_number,route_name,driver_name,weight_tons,rate_per_ton,total_revenue,advance_paid,payment_status,payment_expected_date,notes,builty_url';
+  'date,vehicle_number,route_name,driver_name,weight_tons,rate_per_ton,total_revenue,advance_paid,balance_due,payment_status,payment_expected_date,notes,builty_url';
 
 export type TripExportRow = {
   date: string;
@@ -54,6 +54,22 @@ export function tripExportSuffix(
   return 'filtered';
 }
 
+export function tripExportTotals(trips: Trip[]) {
+  return {
+    count: trips.length,
+    revenue: trips.reduce((s, t) => s + Number(t.total_revenue), 0),
+    weight: trips.reduce((s, t) => s + Number(t.weight_tons), 0),
+    pendingRevenue: trips.reduce((s, t) => (
+      isTripUnpaid(t.payment_status) ? s + Number(t.balance_due || 0) : s
+    ), 0),
+    paidRevenue: trips.reduce((s, t) => (
+      t.payment_status === 'Fully Paid'
+        ? s + Number(t.total_revenue)
+        : s + Number(t.advance_paid || 0)
+    ), 0),
+  };
+}
+
 export function toTripExportRows(trips: Trip[]): TripExportRow[] {
   return trips.map((trip) => ({
     date: trip.date,
@@ -77,6 +93,7 @@ export function toTripExportRows(trips: Trip[]): TripExportRow[] {
 
 export function downloadTripsCsv(trips: Trip[], suffix: string): void {
   const rows = toTripExportRows(trips);
+  const totals = tripExportTotals(trips);
   downloadCsv(`trips-${suffix}.csv`, [
     [...CSV_HEADERS],
     ...rows.map((r) => [
@@ -84,6 +101,10 @@ export function downloadTripsCsv(trips: Trip[], suffix: string): void {
       r.commission, r.totalRevenue, r.advancePaid, r.balanceDue, r.paymentStatus,
       r.paymentDisplay, r.expectedDate, r.notes, r.builtyUrl,
     ]),
+    [],
+    ['', '', '', 'TOTAL', totals.weight.toFixed(2), '', '', '', String(totals.revenue), '', '', '', '', '', '', ''],
+    ['', '', '', 'Pending', '', '', '', '', String(totals.pendingRevenue), '', '', '', '', '', '', ''],
+    ['', '', '', 'Collected', '', '', '', '', String(totals.paidRevenue), '', '', '', '', '', '', ''],
   ]);
 }
 
@@ -107,7 +128,8 @@ function buildTripsPdfHtml(params: {
   for (let i = 0; i < rows.length; i++) {
     const t = rows[i];
     const display = getTripPaymentDisplayStatus(t);
-    const due = t.payment_expected_date ? escapeHtml(formatDate(t.payment_expected_date)) : '';
+    const expected = t.payment_expected_date ? escapeHtml(formatDate(t.payment_expected_date)) : '';
+    const balanceDue = Number(t.balance_due || 0);
     parts[i] =
       `<tr><td>${escapeHtml(formatDate(t.date))}</td>` +
       `<td>${escapeHtml(t.vehicle_number)}</td>` +
@@ -116,12 +138,13 @@ function buildTripsPdfHtml(params: {
       `<td class="num">${Number(t.weight_tons).toFixed(2)}</td>` +
       `<td class="num">${escapeHtml(formatCurrency(Number(t.rate_per_ton)))}</td>` +
       `<td class="num">${escapeHtml(formatCurrency(Number(t.total_revenue)))}</td>` +
+      `<td class="num">${escapeHtml(formatCurrency(balanceDue))}</td>` +
       `<td>${escapeHtml(display)}</td>` +
-      `<td>${due}</td>` +
+      `<td>${expected}</td>` +
       `<td>${escapeHtml(t.notes || '')}</td>` +
       `<td>${buildBuiltyCell(t.builty_url || '')}</td></tr>`;
   }
-  const tableRows = parts.length ? parts.join('') : '<tr><td colspan="11" class="muted">No trips</td></tr>';
+  const tableRows = parts.length ? parts.join('') : '<tr><td colspan="12" class="muted">No trips</td></tr>';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -133,12 +156,17 @@ function buildTripsPdfHtml(params: {
     body{margin:0;font:10px/1.35 Arial,sans-serif;color:#111}
     h1{font-size:16px;margin:0 0 4px}
     .meta{font-size:10px;color:#444;margin-bottom:10px}
-    .summary{display:flex;flex-wrap:wrap;gap:16px 24px;margin-bottom:12px;font-size:11px}
-    .summary strong{font-size:13px}
+    .summary{display:flex;flex-wrap:wrap;gap:16px 28px;margin-bottom:14px;font-size:11px}
+    .summary .total{font-size:12px}
+    .summary strong{font-size:14px}
+    .summary .total strong{font-size:16px;color:#15803d}
+    .summary .due strong{color:#b45309}
     table{width:100%;border-collapse:collapse}
     th,td{border:1px solid #bbb;padding:3px 4px;text-align:left;vertical-align:top}
     th{background:#f3f3f3;font-size:9px;text-transform:uppercase}
     td.num,th.num{text-align:right;white-space:nowrap}
+    tfoot td{font-weight:bold;background:#f8f8f8}
+    tfoot .total-label{text-align:right}
     .builty-link{color:#1d4ed8;text-decoration:none;white-space:nowrap}
     .muted{text-align:center;color:#666}
     @media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
@@ -148,9 +176,9 @@ function buildTripsPdfHtml(params: {
   <h1>JM Transport — Trip Log</h1>
   <p class="meta">${escapeHtml(params.filterLabel)} · Generated ${escapeHtml(formatDate(params.generatedOn))} · ${params.count} trip(s)</p>
   <div class="summary">
-    <div>Revenue <strong>${escapeHtml(formatCurrency(params.revenue))}</strong></div>
+    <div class="total">Revenue <strong>${escapeHtml(formatCurrency(params.revenue))}</strong></div>
     <div>Weight <strong>${params.weight.toFixed(2)} T</strong></div>
-    <div>Pending <strong>${escapeHtml(formatCurrency(params.pendingRevenue))}</strong></div>
+    <div class="due">Due <strong>${escapeHtml(formatCurrency(params.pendingRevenue))}</strong></div>
     <div>Collected <strong>${escapeHtml(formatCurrency(params.paidRevenue))}</strong></div>
   </div>
   <table>
@@ -158,10 +186,20 @@ function buildTripsPdfHtml(params: {
       <tr>
         <th>Date</th><th>Vehicle</th><th>Route</th><th>Driver</th>
         <th class="num">Weight</th><th class="num">Rate/Ton</th><th class="num">Revenue</th>
-        <th>Payment</th><th>Due</th><th>Notes</th><th>Builty</th>
+        <th class="num">Due</th><th>Payment</th><th>Expected</th><th>Notes</th><th>Builty</th>
       </tr>
     </thead>
     <tbody>${tableRows}</tbody>
+    <tfoot>
+      <tr>
+        <td colspan="4" class="total-label">Total</td>
+        <td class="num">${params.weight.toFixed(2)}</td>
+        <td></td>
+        <td class="num">${escapeHtml(formatCurrency(params.revenue))}</td>
+        <td class="num">${escapeHtml(formatCurrency(params.pendingRevenue))}</td>
+        <td colspan="4"></td>
+      </tr>
+    </tfoot>
   </table>
 </body>
 </html>`;

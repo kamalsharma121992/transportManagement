@@ -40,6 +40,14 @@ export function expenseExportSuffix(
   return 'filtered';
 }
 
+export function expenseExportTotals(expenses: Expense[]) {
+  return {
+    total: expenses.reduce((s, e) => s + Number(e.amount), 0),
+    jmTotal: expenses.filter((e) => e.paid_by === 'JM transport').reduce((s, e) => s + Number(e.amount), 0),
+    maheshTotal: expenses.filter((e) => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0),
+  };
+}
+
 export function toExpenseExportRows(expenses: Expense[]): ExpenseExportRow[] {
   return expenses.map((exp) => ({
     date: exp.date,
@@ -59,28 +67,28 @@ export function toExpenseExportRows(expenses: Expense[]): ExpenseExportRow[] {
 
 export function downloadExpensesCsv(expenses: Expense[], suffix: string): void {
   const rows = toExpenseExportRows(expenses);
+  const { total, jmTotal, maheshTotal } = expenseExportTotals(expenses);
   downloadCsv(`expenses-${suffix}.csv`, [
     [...CSV_HEADERS],
     ...rows.map((r) => [
       r.date, r.type, r.vehicle, r.category, r.amount, r.description,
       r.entity, r.paidBy, r.givenTo, r.paidFrom, r.status, r.billReceipt,
     ]),
+    [],
+    ['', '', '', 'TOTAL', String(total), '', '', '', '', '', '', ''],
+    ['', '', '', 'JM', String(jmTotal), '', '', '', '', '', '', ''],
+    ['', '', '', 'Mahesh', String(maheshTotal), '', '', '', '', '', '', ''],
   ]);
 }
 
-export function printExpensesPdf(params: {
+function buildExpensesPdfHtml(params: {
   expenses: Expense[];
   filterLabel: string;
   total: number;
   jmTotal: number;
   maheshTotal: number;
   generatedOn: string;
-}): void {
-  const popup = window.open('', '_blank', 'width=1200,height=900');
-  if (!popup) {
-    throw new Error('Allow pop-ups to download the PDF');
-  }
-
+}): string {
   const rows = toExpenseExportRows(params.expenses);
   const tableRows = rows.length
     ? rows.map((r) => `
@@ -98,7 +106,7 @@ export function printExpensesPdf(params: {
         </tr>`).join('')
     : '<tr><td colspan="10" class="muted">No expenses</td></tr>';
 
-  popup.document.write(`<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -108,12 +116,16 @@ export function printExpensesPdf(params: {
     body { margin: 0; font: 10px/1.35 Arial, sans-serif; color: #111; }
     h1 { font-size: 16px; margin: 0 0 4px; }
     .meta { font-size: 10px; color: #444; margin-bottom: 10px; }
-    .summary { display: flex; gap: 24px; margin-bottom: 12px; font-size: 11px; }
-    .summary strong { font-size: 13px; }
+    .summary { display: flex; flex-wrap: wrap; gap: 16px 28px; margin-bottom: 14px; font-size: 11px; }
+    .summary .total { font-size: 12px; }
+    .summary strong { font-size: 14px; }
+    .summary .total strong { font-size: 16px; color: #b91c1c; }
     table { width: 100%; border-collapse: collapse; }
     th, td { border: 1px solid #bbb; padding: 4px 5px; text-align: left; vertical-align: top; }
     th { background: #f3f3f3; font-size: 9px; text-transform: uppercase; }
     td.num, th.num { text-align: right; white-space: nowrap; }
+    tfoot td { font-weight: bold; background: #f8f8f8; }
+    tfoot .total-label { text-align: right; }
     .muted { text-align: center; color: #666; }
     @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
   </style>
@@ -122,7 +134,7 @@ export function printExpensesPdf(params: {
   <h1>JM Transport — Expenses</h1>
   <p class="meta">${escapeHtml(params.filterLabel)} · Generated ${escapeHtml(formatDate(params.generatedOn))} · ${rows.length} row(s)</p>
   <div class="summary">
-    <div>Total <strong>${escapeHtml(formatCurrency(params.total))}</strong></div>
+    <div class="total">Total <strong>${escapeHtml(formatCurrency(params.total))}</strong></div>
     <div>JM <strong>${escapeHtml(formatCurrency(params.jmTotal))}</strong></div>
     <div>Mahesh <strong>${escapeHtml(formatCurrency(params.maheshTotal))}</strong></div>
   </div>
@@ -135,11 +147,54 @@ export function printExpensesPdf(params: {
       </tr>
     </thead>
     <tbody>${tableRows}</tbody>
+    <tfoot>
+      <tr>
+        <td colspan="4" class="total-label">Total</td>
+        <td class="num">${escapeHtml(formatCurrency(params.total))}</td>
+        <td colspan="5"></td>
+      </tr>
+    </tfoot>
   </table>
 </body>
-</html>`);
-  popup.document.close();
-  popup.focus();
-  popup.addEventListener('afterprint', () => popup.close());
-  setTimeout(() => popup.print(), 250);
+</html>`;
+}
+
+export function printExpensesPdf(params: {
+  expenses: Expense[];
+  filterLabel: string;
+  total: number;
+  jmTotal: number;
+  maheshTotal: number;
+  generatedOn: string;
+}): void {
+  const html = buildExpensesPdfHtml(params);
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  document.body.appendChild(iframe);
+
+  let printed = false;
+  const doPrint = () => {
+    if (printed) return;
+    printed = true;
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch {
+      // ignore
+    }
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      iframe.remove();
+    }, 60_000);
+  };
+
+  iframe.onload = () => {
+    requestAnimationFrame(() => setTimeout(doPrint, 50));
+  };
+  iframe.src = url;
+  setTimeout(doPrint, 1500);
 }
