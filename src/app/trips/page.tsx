@@ -816,6 +816,11 @@ export default function TripsPage() {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
         clearFiltersLabel="Reset filters"
+        primaryAction={
+          <Button onClick={openNewTripDialog}>
+            <Plus className="h-4 w-4 mr-2" /> Add Trip
+          </Button>
+        }
         actions={
           <>
             <Button
@@ -845,14 +850,13 @@ export default function TripsPage() {
               className="hidden"
               onChange={handlePdfUpload}
             />
-            <Button variant="outline" disabled={pdfParsing} onClick={openPdfUpload}>
+            <Button variant="outline" size="sm" disabled={pdfParsing} onClick={openPdfUpload}>
               {pdfParsing ? (
                 <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Reading...</>
               ) : (
                 <><Upload className="h-4 w-4 mr-2" /> Upload PDF</>
               )}
             </Button>
-            <Button onClick={openNewTripDialog}><Plus className="h-4 w-4 mr-2" /> Add Trip</Button>
           </>
         }
       />

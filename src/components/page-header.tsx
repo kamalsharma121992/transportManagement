@@ -4,11 +4,18 @@ import Link from 'next/link';
 import { Plus, X } from 'lucide-react';
 import { TextSearchInput } from '@/components/text-search-input';
 import { ActiveFiltersBar } from '@/components/active-filters-bar';
+import { MobileActionsMenu } from '@/components/mobile-actions-menu';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 type PageHeaderProps = {
   title: string;
+  /**
+   * Page-specific primary CTA (e.g. Add Trip). Always shown when set.
+   * "Add Expense" is shown on every page separately.
+   */
+  primaryAction?: React.ReactNode | null;
+  /** Secondary actions — inline on desktop, Actions dropdown on mobile */
   actions?: React.ReactNode;
   search?: {
     value: string;
@@ -21,8 +28,16 @@ type PageHeaderProps = {
   filterLabels?: string[];
 };
 
+const addExpenseButton = (
+  <Link href="/expenses?add=1" className={cn(buttonVariants())}>
+    <Plus className="h-4 w-4 mr-2" />
+    Add Expense
+  </Link>
+);
+
 export function PageHeader({
   title,
+  primaryAction,
   actions,
   search,
   hasActiveFilters,
@@ -58,11 +73,18 @@ export function PageHeader({
         )}
 
         <div className="flex items-center gap-2 shrink-0 sm:ml-auto">
-          <Link href="/expenses?add=1" className={cn(buttonVariants())}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Expense
-          </Link>
-          {actions}
+          {primaryAction}
+          {addExpenseButton}
+          {actions && (
+            <>
+              <MobileActionsMenu className="md:hidden">
+                {actions}
+              </MobileActionsMenu>
+              <div className="hidden md:flex items-center gap-2">
+                {actions}
+              </div>
+            </>
+          )}
         </div>
       </div>
 

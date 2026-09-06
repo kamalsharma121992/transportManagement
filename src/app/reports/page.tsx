@@ -218,7 +218,7 @@ export default function ReportsPage() {
           clearFiltersLabel="Reset filters"
           filterLabels={activeFilterLabels}
           actions={
-            <div className="flex gap-2">
+            <>
               <Button variant="outline" size="sm" onClick={handleExport}>
                 <Download className="h-4 w-4 mr-1" />
                 CSV
@@ -227,7 +227,7 @@ export default function ReportsPage() {
                 <Printer className="h-4 w-4 mr-1" />
                 Print
               </Button>
-            </div>
+            </>
           }
         />
       </div>

@@ -393,7 +393,7 @@ export default function CapitalPage() {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
         clearFiltersLabel="Reset filters"
-        actions={
+        primaryAction={
           <Button onClick={() => { setEditingId(null); setForm(emptyForm); setDialogOpen(true); }}>
             <Plus className="h-4 w-4 mr-2" /> Add Contribution
           </Button>
