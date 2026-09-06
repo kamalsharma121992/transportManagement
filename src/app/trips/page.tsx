@@ -1573,7 +1573,7 @@ export default function TripsPage() {
                           <p className="font-medium text-gray-800">{formatCurrency(Number(trip.advance_paid))}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] uppercase text-gray-500">Balance due</p>
+                          <p className="text-[10px] uppercase text-gray-500">Pending</p>
                           <p className="font-medium text-gray-800">{formatCurrency(Number(trip.balance_due))}</p>
                         </div>
                         <div>
@@ -1682,6 +1682,8 @@ export default function TripsPage() {
                   <TableHead className="text-right">Weight</TableHead>
                   <TableHead className="text-right">Rate/Ton</TableHead>
                   <SortableTableHead label="Total Revenue" column="total_revenue" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
+                  <TableHead className="text-right">Advance</TableHead>
+                  <TableHead className="text-right">Pending</TableHead>
                   <TableHead>Payment</TableHead>
                   <TableHead>Builty</TableHead>
                   <TableHead>Notes</TableHead>
@@ -1691,11 +1693,11 @@ export default function TripsPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center py-8">Loading...</TableCell>
+                    <TableCell colSpan={14} className="text-center py-8">Loading...</TableCell>
                   </TableRow>
                 ) : trips.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center py-8 text-gray-500">No trips found</TableCell>
+                    <TableCell colSpan={14} className="text-center py-8 text-gray-500">No trips found</TableCell>
                   </TableRow>
                 ) : (
                   trips.map((trip) => {
@@ -1723,6 +1725,13 @@ export default function TripsPage() {
                       <TableCell className="text-right">{Number(trip.weight_tons).toFixed(2)} T</TableCell>
                       <TableCell className="text-right">{formatCurrency(Number(trip.rate_per_ton))}</TableCell>
                       <TableCell className="text-right font-medium text-green-600">{formatCurrency(Number(trip.total_revenue))}</TableCell>
+                      <TableCell className="text-right whitespace-nowrap">{formatCurrency(Number(trip.advance_paid || 0))}</TableCell>
+                      <TableCell className={cn(
+                        'text-right whitespace-nowrap',
+                        Number(trip.balance_due || 0) > 0 && 'font-medium text-amber-700',
+                      )}>
+                        {formatCurrency(Number(trip.balance_due || 0))}
+                      </TableCell>
                       <TableCell>
                         <div className="space-y-0.5">
                           {renderPaymentBadge(trip)}
