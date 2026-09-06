@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase, Expense, ExpenseType, EXPENSE_TYPES, JM_PARTNERS, PAYMENT_SOURCES, EXPENSE_ADVANCE_CATEGORY } from '@/lib/supabase';
 import {
@@ -19,7 +19,9 @@ import {
   type CreditCard,
 } from '@/lib/credit-cards';
 import { createExpenseAdvanceFromExpense } from '@/lib/expense-advances';
-import { removeExpenseImageByUrl, uploadExpenseImage, validateExpenseImageFile } from '@/lib/expense-image';
+import { removeExpenseImageMany, uploadExpenseImageMany, validateExpenseImageFile } from '@/lib/expense-image';
+import { MAX_ENTITY_IMAGES, normalizeImageUrls } from '@/lib/image-urls';
+import { MultiImageField } from '@/components/multi-image-field';
 import { formatCurrency, formatDate, getMonthFilterOptions, getMonthDateRange, FILTER_SELECT_CLASS } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,7 +34,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Pencil, Trash2, ChevronDown, ChevronUp, X, Download, FileText, Upload, ImageIcon, Loader2 } from 'lucide-react';
+import { Pencil, Trash2, ChevronDown, ChevronUp, X, Download, FileText, ImageIcon, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -65,7 +67,6 @@ const emptyForm = {
   payment_mode: 'Cash',
   credit_card_id: '',
   card_details: '',
-  image_url: '',
 };
 
 const typeColors: Record<string, string> = {
@@ -109,12 +110,12 @@ export default function ExpensesPage() {
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [cardsTableMissing, setCardsTableMissing] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
-  const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
-  const [imageRemoved, setImageRemoved] = useState(false);
-  const [imageViewUrl, setImageViewUrl] = useState<string | null>(null);
+  const [expenseImageUrls, setExpenseImageUrls] = useState<string[]>([]);
+  const [pendingImageFiles, setPendingImageFiles] = useState<File[]>([]);
+  const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([]);
+  const [removedImageUrls, setRemovedImageUrls] = useState<string[]>([]);
+  const [imageGallery, setImageGallery] = useState<string[]>([]);
+  const [imageGalleryIndex, setImageGalleryIndex] = useState(0);
   const [selectedMap, setSelectedMap] = useState<Record<number, Expense>>({});
 
   // Filters — default to current month
@@ -374,40 +375,63 @@ export default function ExpensesPage() {
     }
   }, [searchParams, router]);
 
-  function clearImageSelection() {
-    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-    setPendingImageFile(null);
-    setImagePreviewUrl(null);
-    if (imageInputRef.current) imageInputRef.current.value = '';
+  function clearPendingImages() {
+    imagePreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+    setPendingImageFiles([]);
+    setImagePreviewUrls([]);
   }
 
   function resetExpenseImageState() {
-    clearImageSelection();
-    setOriginalImageUrl(null);
-    setImageRemoved(false);
+    clearPendingImages();
+    setExpenseImageUrls([]);
+    setRemovedImageUrls([]);
   }
 
-  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      validateExpenseImageFile(file);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Invalid image');
-      e.target.value = '';
+  function expenseImageList(exp: Expense): string[] {
+    return normalizeImageUrls(exp.image_urls, exp.image_url);
+  }
+
+  function openImageGallery(urls: string[], startIndex = 0) {
+    if (urls.length === 0) return;
+    setImageGallery(urls);
+    setImageGalleryIndex(Math.min(Math.max(startIndex, 0), urls.length - 1));
+  }
+
+  function handleAddImageFiles(files: File[]) {
+    const room = MAX_ENTITY_IMAGES - (expenseImageUrls.length + pendingImageFiles.length);
+    if (room <= 0) {
+      toast.error(`You can attach up to ${MAX_ENTITY_IMAGES} images`);
       return;
     }
-    clearImageSelection();
-    setPendingImageFile(file);
-    setImagePreviewUrl(URL.createObjectURL(file));
-    setImageRemoved(false);
-    setForm((f) => ({ ...f, image_url: '' }));
+    const accepted: File[] = [];
+    for (const file of files.slice(0, room)) {
+      try {
+        validateExpenseImageFile(file);
+        accepted.push(file);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Invalid image');
+      }
+    }
+    if (accepted.length === 0) return;
+    setPendingImageFiles((prev) => [...prev, ...accepted]);
+    setImagePreviewUrls((prev) => [...prev, ...accepted.map((f) => URL.createObjectURL(f))]);
   }
 
-  function removeImageFromForm() {
-    clearImageSelection();
-    if (originalImageUrl || form.image_url) setImageRemoved(true);
-    setForm((f) => ({ ...f, image_url: '' }));
+  function removeExistingExpenseImage(index: number) {
+    setExpenseImageUrls((prev) => {
+      const url = prev[index];
+      if (url) setRemovedImageUrls((r) => (r.includes(url) ? r : [...r, url]));
+      return prev.filter((_, i) => i !== index);
+    });
+  }
+
+  function removePendingExpenseImage(index: number) {
+    setPendingImageFiles((prev) => prev.filter((_, i) => i !== index));
+    setImagePreviewUrls((prev) => {
+      const url = prev[index];
+      if (url) URL.revokeObjectURL(url);
+      return prev.filter((_, i) => i !== index);
+    });
   }
 
   function closeExpenseDialog() {
@@ -479,8 +503,7 @@ export default function ExpensesPage() {
       toast.error('Person is required for Expense Advance (who received the cash)');
       return;
     }
-    const { payment_mode, card_details, credit_card_id, image_url: _ignoredImage, ...rest } = form;
-    void _ignoredImage;
+    const { payment_mode, card_details, credit_card_id, ...rest } = form;
     const cardId = credit_card_id ? Number(credit_card_id) : null;
     const selectedCard = creditCards.find((c) => c.id === cardId);
 
@@ -508,21 +531,25 @@ export default function ExpensesPage() {
       person: form.person || null,
       paid_by_person: form.paid_by_person || null,
       card_id: useCard ? cardId : null,
-      image_url: imageRemoved ? null : (form.image_url || null),
+      image_urls: expenseImageUrls,
+      image_url: expenseImageUrls[0] || null,
     };
     setSaving(true);
     try {
       if (editingId) {
-        let imageUrl = imageRemoved ? null : (form.image_url || null);
-        if (pendingImageFile) {
-          imageUrl = await uploadExpenseImage(editingId, pendingImageFile);
-          if (originalImageUrl && originalImageUrl !== imageUrl) {
-            await removeExpenseImageByUrl(originalImageUrl);
-          }
-        } else if (imageRemoved && originalImageUrl) {
-          await removeExpenseImageByUrl(originalImageUrl);
+        let nextUrls = [...expenseImageUrls];
+        if (pendingImageFiles.length > 0) {
+          const uploaded = await uploadExpenseImageMany(editingId, pendingImageFiles);
+          nextUrls = [...nextUrls, ...uploaded];
         }
-        const { error } = await supabase.from('expenses').update({ ...payload, image_url: imageUrl }).eq('id', editingId);
+        if (removedImageUrls.length > 0) {
+          await removeExpenseImageMany(removedImageUrls);
+        }
+        const { error } = await supabase.from('expenses').update({
+          ...payload,
+          image_urls: nextUrls,
+          image_url: nextUrls[0] || null,
+        }).eq('id', editingId);
         if (error) { toast.error(error.message); return; }
         if (form.category === EXPENSE_ADVANCE_CATEGORY) {
           try {
@@ -542,10 +569,13 @@ export default function ExpensesPage() {
         const { data: inserted, error } = await supabase.from('expenses').insert(payload).select('id').single();
         if (error) { toast.error(error.message); return; }
 
-        if (pendingImageFile && inserted?.id) {
+        if (pendingImageFiles.length > 0 && inserted?.id) {
           try {
-            const imageUrl = await uploadExpenseImage(inserted.id, pendingImageFile);
-            const { error: imgErr } = await supabase.from('expenses').update({ image_url: imageUrl }).eq('id', inserted.id);
+            const uploaded = await uploadExpenseImageMany(inserted.id, pendingImageFiles);
+            const { error: imgErr } = await supabase.from('expenses').update({
+              image_urls: uploaded,
+              image_url: uploaded[0] || null,
+            }).eq('id', inserted.id);
             if (imgErr) toast.error('Expense saved but image upload failed: ' + imgErr.message);
           } catch (imgErr) {
             toast.error(imgErr instanceof Error ? imgErr.message : 'Expense saved but image upload failed');
@@ -595,7 +625,8 @@ export default function ExpensesPage() {
 
   function startEdit(exp: Expense) {
     resetExpenseImageState();
-    setOriginalImageUrl(exp.image_url || null);
+    const urls = expenseImageList(exp);
+    setExpenseImageUrls(urls);
     setEditingId(exp.id);
     setForm({
       date: exp.date,
@@ -615,7 +646,6 @@ export default function ExpensesPage() {
         : paymentModeForCategory(exp.category),
       credit_card_id: exp.card_id ? String(exp.card_id) : '',
       card_details: '',
-      image_url: exp.image_url || '',
     });
     setDialogOpen(true);
   }
@@ -623,12 +653,9 @@ export default function ExpensesPage() {
   async function handleDelete(id: number) {
     if (!confirm('Delete this expense?')) return;
     const exp = expenses.find((e) => e.id === id);
-    if (exp?.image_url) {
-      try {
-        await removeExpenseImageByUrl(exp.image_url);
-      } catch {
-        // Continue deleting expense even if storage cleanup fails
-      }
+    const urls = exp ? expenseImageList(exp) : [];
+    if (urls.length > 0) {
+      await removeExpenseImageMany(urls);
     }
     const { error } = await supabase.from('expenses').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
@@ -838,48 +865,18 @@ export default function ExpensesPage() {
                 )}
               </div>
               <div>
-                <Label>Receipt image (optional)</Label>
-                <input
-                  ref={imageInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-                  className="hidden"
-                  onChange={handleImageSelect}
+                <MultiImageField
+                  label="Receipt images (optional)"
+                  existingUrls={expenseImageUrls}
+                  pendingPreviews={imagePreviewUrls}
+                  onAddFiles={handleAddImageFiles}
+                  onRemoveExisting={removeExistingExpenseImage}
+                  onRemovePending={removePendingExpenseImage}
+                  onView={(url) => {
+                    const all = [...expenseImageUrls, ...imagePreviewUrls];
+                    openImageGallery(all, all.indexOf(url));
+                  }}
                 />
-                {(imagePreviewUrl || (!imageRemoved && form.image_url)) ? (
-                  <div className="mt-1 space-y-2">
-                    <button
-                      type="button"
-                      className="block w-full max-w-xs overflow-hidden rounded-md border bg-gray-50"
-                      onClick={() => setImageViewUrl(imagePreviewUrl || form.image_url)}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={imagePreviewUrl || form.image_url}
-                        alt="Expense receipt"
-                        className="max-h-40 w-full object-contain"
-                      />
-                    </button>
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" variant="outline" size="sm" onClick={() => imageInputRef.current?.click()}>
-                        <Upload className="h-3.5 w-3.5 mr-1" /> Replace
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" onClick={removeImageFromForm}>
-                        <X className="h-3.5 w-3.5 mr-1" /> Remove
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="mt-1 w-full sm:w-auto"
-                    onClick={() => imageInputRef.current?.click()}
-                  >
-                    <Upload className="h-4 w-4 mr-2" /> Upload image
-                  </Button>
-                )}
-                <p className="text-[10px] text-gray-400 mt-1">JPEG, PNG, or WebP · max 10 MB</p>
               </div>
               <Button type="submit" className="w-full" disabled={saving}>
                 {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</> : `${editingId ? 'Update' : 'Add'} Expense`}
@@ -888,23 +885,56 @@ export default function ExpensesPage() {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={!!imageViewUrl} onOpenChange={(open) => { if (!open) setImageViewUrl(null); }}>
+        <Dialog
+          open={imageGallery.length > 0}
+          onOpenChange={(open) => { if (!open) { setImageGallery([]); setImageGalleryIndex(0); } }}
+        >
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
             <DialogHeader>
-              <DialogTitle>Expense receipt</DialogTitle>
+              <DialogTitle>
+                Expense receipt{imageGallery.length > 1 ? ` (${imageGalleryIndex + 1}/${imageGallery.length})` : ''}
+              </DialogTitle>
             </DialogHeader>
-            {imageViewUrl && (
+            {imageGallery[imageGalleryIndex] && (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={imageViewUrl} alt="Expense receipt" className="w-full max-h-[70vh] object-contain rounded-md border bg-gray-50" />
-                <a
-                  href={imageViewUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-blue-600 hover:underline"
-                >
-                  Open full image in new tab
-                </a>
+                <img
+                  src={imageGallery[imageGalleryIndex]}
+                  alt="Expense receipt"
+                  className="w-full max-h-[70vh] object-contain rounded-md border bg-gray-50"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  {imageGallery.length > 1 && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={imageGalleryIndex <= 0}
+                        onClick={() => setImageGalleryIndex((i) => i - 1)}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={imageGalleryIndex >= imageGallery.length - 1}
+                        onClick={() => setImageGalleryIndex((i) => i + 1)}
+                      >
+                        Next
+                      </Button>
+                    </>
+                  )}
+                  <a
+                    href={imageGallery[imageGalleryIndex]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    Open full image in new tab
+                  </a>
+                </div>
               </>
             )}
           </DialogContent>
@@ -1179,17 +1209,24 @@ export default function ExpensesPage() {
                             <p className="font-medium text-gray-800 break-all">{exp.bill_receipt_ref}</p>
                           </div>
                         )}
-                        {exp.image_url && (
+                        {expenseImageList(exp).length > 0 && (
                           <div className="col-span-2">
-                            <p className="text-[10px] uppercase text-gray-500">Image</p>
-                            <button
-                              type="button"
-                              className="mt-1 block max-w-[200px] overflow-hidden rounded border"
-                              onClick={(e) => { e.stopPropagation(); setImageViewUrl(exp.image_url!); }}
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={exp.image_url} alt="Expense receipt" className="max-h-28 w-full object-contain bg-gray-50" />
-                            </button>
+                            <p className="text-[10px] uppercase text-gray-500">
+                              Images{expenseImageList(exp).length > 1 ? ` (${expenseImageList(exp).length})` : ''}
+                            </p>
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              {expenseImageList(exp).map((url, idx) => (
+                                <button
+                                  key={`${exp.id}-img-${idx}`}
+                                  type="button"
+                                  className="block max-w-[120px] overflow-hidden rounded border"
+                                  onClick={(e) => { e.stopPropagation(); openImageGallery(expenseImageList(exp), idx); }}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={url} alt="Expense receipt" className="max-h-28 w-full object-contain bg-gray-50" />
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -1309,16 +1346,21 @@ export default function ExpensesPage() {
                         </span>
                       </TableCell>
                       <TableCell>
-                        {exp.image_url ? (
+                        {expenseImageList(exp).length > 0 ? (
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8"
-                            title="View image"
-                            onClick={() => setImageViewUrl(exp.image_url!)}
+                            className="h-8 w-8 relative"
+                            title={expenseImageList(exp).length > 1 ? `View images (${expenseImageList(exp).length})` : 'View image'}
+                            onClick={() => openImageGallery(expenseImageList(exp))}
                           >
                             <ImageIcon className="h-4 w-4 text-blue-600" />
+                            {expenseImageList(exp).length > 1 && (
+                              <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 px-0.5 rounded-full bg-blue-600 text-white text-[9px] leading-3.5 text-center">
+                                {expenseImageList(exp).length}
+                              </span>
+                            )}
                           </Button>
                         ) : (
                           <span className="text-gray-300">—</span>

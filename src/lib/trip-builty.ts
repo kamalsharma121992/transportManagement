@@ -31,8 +31,8 @@ function builtyExtension(file: File): string {
   return 'jpg';
 }
 
-export function builtyStoragePath(tripId: number, file: File): string {
-  return `${tripId}/${Date.now()}.${builtyExtension(file)}`;
+export function builtyStoragePath(tripId: number, file: File, index = 0): string {
+  return `${tripId}/${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}.${builtyExtension(file)}`;
 }
 
 export function builtyPathFromPublicUrl(url: string): string | null {
@@ -42,9 +42,9 @@ export function builtyPathFromPublicUrl(url: string): string | null {
   return decodeURIComponent(url.slice(idx + marker.length));
 }
 
-export async function uploadTripBuilty(tripId: number, file: File): Promise<string> {
+export async function uploadTripBuilty(tripId: number, file: File, index = 0): Promise<string> {
   validateBuiltyFile(file);
-  const path = builtyStoragePath(tripId, file);
+  const path = builtyStoragePath(tripId, file, index);
   const { error } = await supabase.storage
     .from(TRIP_BUILTY_BUCKET)
     .upload(path, file, { upsert: true, contentType: file.type });
@@ -53,10 +53,28 @@ export async function uploadTripBuilty(tripId: number, file: File): Promise<stri
   return data.publicUrl;
 }
 
+export async function uploadTripBuiltyMany(tripId: number, files: File[]): Promise<string[]> {
+  const urls: string[] = [];
+  for (let i = 0; i < files.length; i++) {
+    urls.push(await uploadTripBuilty(tripId, files[i], i));
+  }
+  return urls;
+}
+
 export async function removeTripBuiltyByUrl(url: string | null | undefined): Promise<void> {
   if (!url) return;
   const path = builtyPathFromPublicUrl(url);
   if (!path) return;
   const { error } = await supabase.storage.from(TRIP_BUILTY_BUCKET).remove([path]);
   if (error) throw error;
+}
+
+export async function removeTripBuiltyMany(urls: string[]): Promise<void> {
+  for (const url of urls) {
+    try {
+      await removeTripBuiltyByUrl(url);
+    } catch {
+      // continue deleting remaining files
+    }
+  }
 }

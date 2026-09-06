@@ -31,8 +31,8 @@ function imageExtension(file: File): string {
   return 'jpg';
 }
 
-export function expenseImageStoragePath(expenseId: number, file: File): string {
-  return `${expenseId}/${Date.now()}.${imageExtension(file)}`;
+export function expenseImageStoragePath(expenseId: number, file: File, index = 0): string {
+  return `${expenseId}/${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}.${imageExtension(file)}`;
 }
 
 export function expenseImagePathFromPublicUrl(url: string): string | null {
@@ -42,9 +42,9 @@ export function expenseImagePathFromPublicUrl(url: string): string | null {
   return decodeURIComponent(url.slice(idx + marker.length));
 }
 
-export async function uploadExpenseImage(expenseId: number, file: File): Promise<string> {
+export async function uploadExpenseImage(expenseId: number, file: File, index = 0): Promise<string> {
   validateExpenseImageFile(file);
-  const path = expenseImageStoragePath(expenseId, file);
+  const path = expenseImageStoragePath(expenseId, file, index);
   const { error } = await supabase.storage
     .from(EXPENSE_IMAGE_BUCKET)
     .upload(path, file, { upsert: true, contentType: file.type });
@@ -53,10 +53,28 @@ export async function uploadExpenseImage(expenseId: number, file: File): Promise
   return data.publicUrl;
 }
 
+export async function uploadExpenseImageMany(expenseId: number, files: File[]): Promise<string[]> {
+  const urls: string[] = [];
+  for (let i = 0; i < files.length; i++) {
+    urls.push(await uploadExpenseImage(expenseId, files[i], i));
+  }
+  return urls;
+}
+
 export async function removeExpenseImageByUrl(url: string | null | undefined): Promise<void> {
   if (!url) return;
   const path = expenseImagePathFromPublicUrl(url);
   if (!path) return;
   const { error } = await supabase.storage.from(EXPENSE_IMAGE_BUCKET).remove([path]);
   if (error) throw error;
+}
+
+export async function removeExpenseImageMany(urls: string[]): Promise<void> {
+  for (const url of urls) {
+    try {
+      await removeExpenseImageByUrl(url);
+    } catch {
+      // continue deleting remaining files
+    }
+  }
 }

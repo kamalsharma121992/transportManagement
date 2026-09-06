@@ -110,6 +110,7 @@ export type Trip = {
   payment_expected_date: string | null;
   notes: string | null;
   builty_url: string | null;
+  builty_urls: string[] | null;
 };
 
 export const TRIP_PAYMENT_STATUSES = ['Fully Paid', 'Pending'] as const;
@@ -134,6 +135,7 @@ export type Expense = {
   card_id: number | null;
   expense_advance_id: number | null;
   image_url: string | null;
+  image_urls: string[] | null;
 };
 
 export type CreditCard = {

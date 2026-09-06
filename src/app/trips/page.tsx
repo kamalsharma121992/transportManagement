@@ -54,7 +54,9 @@ import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
 import { downloadTripsCsv, printTripsPdf, tripExportSuffix, tripExportTotals, TRIP_EXPORT_SELECT, TRIP_PDF_SELECT } from '@/lib/trip-export';
-import { removeTripBuiltyByUrl, uploadTripBuilty, validateBuiltyFile } from '@/lib/trip-builty';
+import { removeTripBuiltyMany, uploadTripBuiltyMany, validateBuiltyFile } from '@/lib/trip-builty';
+import { MAX_ENTITY_IMAGES, normalizeImageUrls } from '@/lib/image-urls';
+import { MultiImageField } from '@/components/multi-image-field';
 
 const emptyTrip: TripFormData = {
   date: new Date().toISOString().split('T')[0],
@@ -104,12 +106,12 @@ export default function TripsPage() {
   const [pdfImporting, setPdfImporting] = useState(false);
   const [parsedTrips, setParsedTrips] = useState<ParsedTripRow[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const builtyInputRef = useRef<HTMLInputElement>(null);
-  const [pendingBuiltyFile, setPendingBuiltyFile] = useState<File | null>(null);
-  const [builtyPreviewUrl, setBuiltyPreviewUrl] = useState<string | null>(null);
-  const [originalBuiltyUrl, setOriginalBuiltyUrl] = useState<string | null>(null);
-  const [builtyRemoved, setBuiltyRemoved] = useState(false);
-  const [builtyViewUrl, setBuiltyViewUrl] = useState<string | null>(null);
+  const [builtyUrls, setBuiltyUrls] = useState<string[]>([]);
+  const [pendingBuiltyFiles, setPendingBuiltyFiles] = useState<File[]>([]);
+  const [builtyPreviewUrls, setBuiltyPreviewUrls] = useState<string[]>([]);
+  const [removedBuiltyUrls, setRemovedBuiltyUrls] = useState<string[]>([]);
+  const [builtyGallery, setBuiltyGallery] = useState<string[]>([]);
+  const [builtyGalleryIndex, setBuiltyGalleryIndex] = useState(0);
   const [saving, setSaving] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
@@ -419,21 +421,30 @@ export default function TripsPage() {
     });
   }, []);
 
-  function clearBuiltySelection() {
-    if (builtyPreviewUrl) URL.revokeObjectURL(builtyPreviewUrl);
-    setPendingBuiltyFile(null);
-    setBuiltyPreviewUrl(null);
-    if (builtyInputRef.current) builtyInputRef.current.value = '';
+  function clearPendingBuilty() {
+    builtyPreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+    setPendingBuiltyFiles([]);
+    setBuiltyPreviewUrls([]);
   }
 
   function resetFormDialog() {
-    clearBuiltySelection();
-    setOriginalBuiltyUrl(null);
-    setBuiltyRemoved(false);
+    clearPendingBuilty();
+    setBuiltyUrls([]);
+    setRemovedBuiltyUrls([]);
     setEditingId(null);
     setForm(emptyTrip);
     setFullPending(false);
     setDialogOpen(false);
+  }
+
+  function openBuiltyGallery(urls: string[], startIndex = 0) {
+    if (urls.length === 0) return;
+    setBuiltyGallery(urls);
+    setBuiltyGalleryIndex(Math.min(Math.max(startIndex, 0), urls.length - 1));
+  }
+
+  function tripBuiltyUrls(trip: Trip): string[] {
+    return normalizeImageUrls(trip.builty_urls, trip.builty_url);
   }
 
   function resetPdfModal() {
@@ -623,60 +634,83 @@ export default function TripsPage() {
     });
   }
 
-  function handleBuiltySelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      validateBuiltyFile(file);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Invalid builty image');
-      e.target.value = '';
+  function handleAddBuiltyFiles(files: File[]) {
+    const room = MAX_ENTITY_IMAGES - (builtyUrls.length + pendingBuiltyFiles.length);
+    if (room <= 0) {
+      toast.error(`You can attach up to ${MAX_ENTITY_IMAGES} images`);
       return;
     }
-    clearBuiltySelection();
-    setPendingBuiltyFile(file);
-    setBuiltyPreviewUrl(URL.createObjectURL(file));
-    setBuiltyRemoved(false);
-    setForm((f) => ({ ...f, builty_url: '' }));
+    const accepted: File[] = [];
+    for (const file of files.slice(0, room)) {
+      try {
+        validateBuiltyFile(file);
+        accepted.push(file);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Invalid builty image');
+      }
+    }
+    if (accepted.length === 0) return;
+    setPendingBuiltyFiles((prev) => [...prev, ...accepted]);
+    setBuiltyPreviewUrls((prev) => [...prev, ...accepted.map((f) => URL.createObjectURL(f))]);
   }
 
-  function removeBuiltyFromForm() {
-    clearBuiltySelection();
-    if (originalBuiltyUrl || form.builty_url) setBuiltyRemoved(true);
-    setForm((f) => ({ ...f, builty_url: '' }));
+  function removeExistingBuilty(index: number) {
+    setBuiltyUrls((prev) => {
+      const url = prev[index];
+      if (url) setRemovedBuiltyUrls((r) => (r.includes(url) ? r : [...r, url]));
+      return prev.filter((_, i) => i !== index);
+    });
+  }
+
+  function removePendingBuilty(index: number) {
+    setPendingBuiltyFiles((prev) => prev.filter((_, i) => i !== index));
+    setBuiltyPreviewUrls((prev) => {
+      const url = prev[index];
+      if (url) URL.revokeObjectURL(url);
+      return prev.filter((_, i) => i !== index);
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     try {
+      const { builty_url: _builty, ...formRest } = form;
+      void _builty;
       const payload = {
-        ...form,
+        ...formRest,
         payment_expected_date:
           form.payment_status === 'Pending' ? form.payment_expected_date || null : null,
         notes: form.notes.trim() || null,
-        builty_url: builtyRemoved ? null : (form.builty_url || null),
+        builty_urls: builtyUrls,
+        builty_url: builtyUrls[0] || null,
       };
 
       if (editingId) {
-        let builtyUrl = builtyRemoved ? null : (form.builty_url || null);
-        if (pendingBuiltyFile) {
-          builtyUrl = await uploadTripBuilty(editingId, pendingBuiltyFile);
-          if (originalBuiltyUrl && originalBuiltyUrl !== builtyUrl) {
-            await removeTripBuiltyByUrl(originalBuiltyUrl);
-          }
-        } else if (builtyRemoved && originalBuiltyUrl) {
-          await removeTripBuiltyByUrl(originalBuiltyUrl);
+        let nextUrls = [...builtyUrls];
+        if (pendingBuiltyFiles.length > 0) {
+          const uploaded = await uploadTripBuiltyMany(editingId, pendingBuiltyFiles);
+          nextUrls = [...nextUrls, ...uploaded];
         }
-        const { error } = await supabase.from('trips').update({ ...payload, builty_url: builtyUrl }).eq('id', editingId);
+        if (removedBuiltyUrls.length > 0) {
+          await removeTripBuiltyMany(removedBuiltyUrls);
+        }
+        const { error } = await supabase.from('trips').update({
+          ...payload,
+          builty_urls: nextUrls,
+          builty_url: nextUrls[0] || null,
+        }).eq('id', editingId);
         if (error) { toast.error(error.message); return; }
         toast.success('Trip updated');
       } else {
         const { data, error } = await supabase.from('trips').insert(payload).select('id').single();
         if (error) { toast.error(error.message); return; }
-        if (pendingBuiltyFile && data?.id) {
-          const builtyUrl = await uploadTripBuilty(data.id, pendingBuiltyFile);
-          const { error: updateError } = await supabase.from('trips').update({ builty_url: builtyUrl }).eq('id', data.id);
+        if (pendingBuiltyFiles.length > 0 && data?.id) {
+          const uploaded = await uploadTripBuiltyMany(data.id, pendingBuiltyFiles);
+          const { error: updateError } = await supabase.from('trips').update({
+            builty_urls: uploaded,
+            builty_url: uploaded[0] || null,
+          }).eq('id', data.id);
           if (updateError) { toast.error(updateError.message); return; }
         }
         toast.success('Trip added');
@@ -691,9 +725,10 @@ export default function TripsPage() {
   }
 
   function startEdit(trip: Trip) {
-    clearBuiltySelection();
-    setBuiltyRemoved(false);
-    setOriginalBuiltyUrl(trip.builty_url || null);
+    clearPendingBuilty();
+    setRemovedBuiltyUrls([]);
+    const urls = tripBuiltyUrls(trip);
+    setBuiltyUrls(urls);
     setEditingId(trip.id);
     const next = {
       date: trip.date,
@@ -710,7 +745,7 @@ export default function TripsPage() {
       payment_status: normalizeTripPaymentStatus(trip.payment_status),
       payment_expected_date: trip.payment_expected_date || '',
       notes: trip.notes || '',
-      builty_url: trip.builty_url || '',
+      builty_url: urls[0] || '',
     };
     setForm(next);
     setFullPending(isFullPendingAmounts(next));
@@ -720,12 +755,9 @@ export default function TripsPage() {
   async function handleDelete(id: number) {
     if (!confirm('Delete this trip?')) return;
     const trip = trips.find((t) => t.id === id);
-    if (trip?.builty_url) {
-      try {
-        await removeTripBuiltyByUrl(trip.builty_url);
-      } catch {
-        // Continue deleting trip even if storage cleanup fails
-      }
+    const urls = trip ? tripBuiltyUrls(trip) : [];
+    if (urls.length > 0) {
+      await removeTripBuiltyMany(urls);
     }
     const { error } = await supabase.from('trips').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
@@ -767,17 +799,23 @@ export default function TripsPage() {
   }
 
   function renderBuiltyButton(trip: Trip) {
-    if (!trip.builty_url) return <span className="text-gray-300">—</span>;
+    const urls = tripBuiltyUrls(trip);
+    if (urls.length === 0) return <span className="text-gray-300">—</span>;
     return (
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        className="h-8 w-8"
-        title="View builty"
-        onClick={() => setBuiltyViewUrl(trip.builty_url!)}
+        className="h-8 w-8 relative"
+        title={urls.length > 1 ? `View builty (${urls.length})` : 'View builty'}
+        onClick={() => openBuiltyGallery(urls)}
       >
         <ImageIcon className="h-4 w-4 text-blue-600" />
+        {urls.length > 1 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 px-0.5 rounded-full bg-blue-600 text-white text-[9px] leading-3.5 text-center">
+            {urls.length}
+          </span>
+        )}
       </Button>
     );
   }
@@ -1375,48 +1413,18 @@ export default function TripsPage() {
                 </>
               )}
               <div className="sm:col-span-2">
-                <Label>Builty (image)</Label>
-                <input
-                  ref={builtyInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-                  className="hidden"
-                  onChange={handleBuiltySelect}
+                <MultiImageField
+                  label="Builty (images)"
+                  existingUrls={builtyUrls}
+                  pendingPreviews={builtyPreviewUrls}
+                  onAddFiles={handleAddBuiltyFiles}
+                  onRemoveExisting={removeExistingBuilty}
+                  onRemovePending={removePendingBuilty}
+                  onView={(url) => {
+                    const all = [...builtyUrls, ...builtyPreviewUrls];
+                    openBuiltyGallery(all, all.indexOf(url));
+                  }}
                 />
-                {(builtyPreviewUrl || (!builtyRemoved && form.builty_url)) ? (
-                  <div className="mt-1 space-y-2">
-                    <button
-                      type="button"
-                      className="block w-full max-w-xs overflow-hidden rounded-md border bg-gray-50"
-                      onClick={() => setBuiltyViewUrl(builtyPreviewUrl || form.builty_url)}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={builtyPreviewUrl || form.builty_url}
-                        alt="Builty preview"
-                        className="max-h-40 w-full object-contain"
-                      />
-                    </button>
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" variant="outline" size="sm" onClick={() => builtyInputRef.current?.click()}>
-                        <Upload className="h-3.5 w-3.5 mr-1" /> Replace
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" onClick={removeBuiltyFromForm}>
-                        <X className="h-3.5 w-3.5 mr-1" /> Remove
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="mt-1 w-full sm:w-auto"
-                    onClick={() => builtyInputRef.current?.click()}
-                  >
-                    <Upload className="h-4 w-4 mr-2" /> Upload builty image
-                  </Button>
-                )}
-                <p className="text-[10px] text-gray-400 mt-1">JPEG, PNG, or WebP · max 10 MB</p>
               </div>
               <div className="sm:col-span-2">
                 <Label>Notes</Label>
@@ -1434,23 +1442,56 @@ export default function TripsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!builtyViewUrl} onOpenChange={(open) => { if (!open) setBuiltyViewUrl(null); }}>
+      <Dialog
+        open={builtyGallery.length > 0}
+        onOpenChange={(open) => { if (!open) { setBuiltyGallery([]); setBuiltyGalleryIndex(0); } }}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
           <DialogHeader>
-            <DialogTitle>Builty</DialogTitle>
+            <DialogTitle>
+              Builty{builtyGallery.length > 1 ? ` (${builtyGalleryIndex + 1}/${builtyGallery.length})` : ''}
+            </DialogTitle>
           </DialogHeader>
-          {builtyViewUrl && (
+          {builtyGallery[builtyGalleryIndex] && (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={builtyViewUrl} alt="Builty" className="w-full max-h-[70vh] object-contain rounded-md border bg-gray-50" />
-              <a
-                href={builtyViewUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-blue-600 hover:underline"
-              >
-                Open full image in new tab
-              </a>
+              <img
+                src={builtyGallery[builtyGalleryIndex]}
+                alt="Builty"
+                className="w-full max-h-[70vh] object-contain rounded-md border bg-gray-50"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                {builtyGallery.length > 1 && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={builtyGalleryIndex <= 0}
+                      onClick={() => setBuiltyGalleryIndex((i) => i - 1)}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={builtyGalleryIndex >= builtyGallery.length - 1}
+                      onClick={() => setBuiltyGalleryIndex((i) => i + 1)}
+                    >
+                      Next
+                    </Button>
+                  </>
+                )}
+                <a
+                  href={builtyGallery[builtyGalleryIndex]}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  Open full image in new tab
+                </a>
+              </div>
             </>
           )}
         </DialogContent>
@@ -1551,17 +1592,24 @@ export default function TripsPage() {
                             </p>
                           </div>
                         )}
-                        {trip.builty_url && (
+                        {tripBuiltyUrls(trip).length > 0 && (
                           <div className="col-span-2">
-                            <p className="text-[10px] uppercase text-gray-500">Builty</p>
-                            <button
-                              type="button"
-                              className="mt-1 block max-w-[200px] overflow-hidden rounded border"
-                              onClick={(e) => { e.stopPropagation(); setBuiltyViewUrl(trip.builty_url!); }}
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={trip.builty_url} alt="Builty" className="max-h-28 w-full object-contain bg-gray-50" />
-                            </button>
+                            <p className="text-[10px] uppercase text-gray-500">
+                              Builty{tripBuiltyUrls(trip).length > 1 ? ` (${tripBuiltyUrls(trip).length})` : ''}
+                            </p>
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              {tripBuiltyUrls(trip).map((url, idx) => (
+                                <button
+                                  key={`${trip.id}-builty-${idx}`}
+                                  type="button"
+                                  className="block max-w-[120px] overflow-hidden rounded border"
+                                  onClick={(e) => { e.stopPropagation(); openBuiltyGallery(tripBuiltyUrls(trip), idx); }}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={url} alt="Builty" className="max-h-28 w-full object-contain bg-gray-50" />
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         )}
                         {trip.notes && (

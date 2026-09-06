@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS trips (
   payment_expected_date DATE,
   notes TEXT,
   builty_url TEXT,
+  builty_urls TEXT[] DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -101,6 +102,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   payment_source TEXT DEFAULT 'Partner',
   card_id INTEGER REFERENCES credit_cards(id),
   image_url TEXT,
+  image_urls TEXT[] DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

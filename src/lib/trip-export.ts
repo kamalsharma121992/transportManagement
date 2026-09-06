@@ -2,14 +2,15 @@ import type { Trip } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports';
 import { getTripPaymentDisplayStatus, isTripUnpaid } from '@/lib/trip-payments';
+import { normalizeImageUrls } from '@/lib/image-urls';
 
 /** Columns for CSV export */
 export const TRIP_EXPORT_SELECT =
-  'date,vehicle_number,route_name,driver_name,weight_tons,distance_km,rate_per_ton,commission,total_revenue,advance_paid,balance_due,payment_status,payment_expected_date,notes,builty_url';
+  'date,vehicle_number,route_name,driver_name,weight_tons,distance_km,rate_per_ton,commission,total_revenue,advance_paid,balance_due,payment_status,payment_expected_date,notes,builty_url,builty_urls';
 
 /** Leaner columns for PDF table only */
 export const TRIP_PDF_SELECT =
-  'date,vehicle_number,route_name,driver_name,weight_tons,rate_per_ton,total_revenue,advance_paid,balance_due,payment_status,payment_expected_date,notes,builty_url';
+  'date,vehicle_number,route_name,driver_name,weight_tons,rate_per_ton,total_revenue,advance_paid,balance_due,payment_status,payment_expected_date,notes,builty_url,builty_urls';
 
 export type TripExportRow = {
   date: string;
@@ -87,7 +88,7 @@ export function toTripExportRows(trips: Trip[]): TripExportRow[] {
     paymentDisplay: getTripPaymentDisplayStatus(trip),
     expectedDate: trip.payment_expected_date || '',
     notes: trip.notes || '',
-    builtyUrl: trip.builty_url || '',
+    builtyUrl: normalizeImageUrls(trip.builty_urls, trip.builty_url).join(' '),
   }));
 }
 
@@ -108,9 +109,13 @@ export function downloadTripsCsv(trips: Trip[], suffix: string): void {
   ]);
 }
 
-function buildBuiltyCell(url: string): string {
-  if (!url) return '';
-  return `<a href="${escapeHtml(url)}" class="builty-link">View</a>`;
+function buildBuiltyCell(trip: Trip): string {
+  const urls = normalizeImageUrls(trip.builty_urls, trip.builty_url);
+  if (urls.length === 0) return '';
+  if (urls.length === 1) {
+    return `<a href="${escapeHtml(urls[0])}" class="builty-link">View</a>`;
+  }
+  return `<a href="${escapeHtml(urls[0])}" class="builty-link">View (${urls.length})</a>`;
 }
 
 function buildTripsPdfHtml(params: {
@@ -142,7 +147,7 @@ function buildTripsPdfHtml(params: {
       `<td>${escapeHtml(display)}</td>` +
       `<td>${expected}</td>` +
       `<td>${escapeHtml(t.notes || '')}</td>` +
-      `<td>${buildBuiltyCell(t.builty_url || '')}</td></tr>`;
+      `<td>${buildBuiltyCell(t)}</td></tr>`;
   }
   const tableRows = parts.length ? parts.join('') : '<tr><td colspan="12" class="muted">No trips</td></tr>';
 

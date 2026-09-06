@@ -1,5 +1,6 @@
 -- Builty (transport receipt) image for trips + public storage bucket
 -- Run in Supabase SQL Editor
+-- For multiple images, also run supabase/multi_images.sql
 
 ALTER TABLE trips
   ADD COLUMN IF NOT EXISTS builty_url TEXT;

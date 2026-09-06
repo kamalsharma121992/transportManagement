@@ -1,5 +1,6 @@
 -- Optional receipt/bill image for expenses + public storage bucket
 -- Run in Supabase SQL Editor
+-- For multiple images, also run supabase/multi_images.sql
 
 ALTER TABLE expenses
   ADD COLUMN IF NOT EXISTS image_url TEXT;
