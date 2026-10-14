@@ -374,7 +374,7 @@ export function AuditSection() {
     [rows],
   );
   const screens = useMemo(
-    () => [...new Set(['Expenses', 'Capital', 'Users', 'Roles', ...rows.map((row) => row.screen)])].sort(),
+    () => [...new Set(['Expenses', 'Capital', 'Trip Log', 'Users', 'Roles', ...rows.map((row) => row.screen)])].sort(),
     [rows],
   );
 

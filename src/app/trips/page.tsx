@@ -38,7 +38,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Download, ImageIcon } from 'lucide-react';
+import { Eye, Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Download, ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -60,6 +60,7 @@ import { removeTripBuiltyMany, uploadTripBuiltyMany, validateBuiltyFile } from '
 import { MAX_ENTITY_IMAGES, normalizeImageUrls } from '@/lib/image-urls';
 import { MultiImageField } from '@/components/multi-image-field';
 import { useSession, useSessionReady } from '@/components/session-provider';
+import { recordAudit } from '@/lib/audit-client';
 
 const emptyTrip: TripFormData = {
   date: new Date().toISOString().split('T')[0],
@@ -80,6 +81,13 @@ const emptyTrip: TripFormData = {
 };
 
 const SELECT_CLASS = 'w-full min-w-[120px] border rounded-md px-2 py-1.5 text-sm bg-white';
+
+function tripAuditLine(
+  action: 'Added' | 'Updated' | 'Deleted',
+  trip: { date: string; vehicle_number: string; route_name: string; driver_name: string; total_revenue: number },
+) {
+  return `${action} ${trip.vehicle_number} · ${trip.route_name} · ${trip.driver_name} ${formatCurrency(Number(trip.total_revenue))} on ${formatDate(trip.date)}`;
+}
 
 function calcNetRevenue(weight: number, rate: number, commission: number) {
   return Math.max(Math.round((weight * rate - (commission || 0)) * 100) / 100, 0);
@@ -103,6 +111,7 @@ export default function TripsPage() {
   const [routes, setRoutes] = useState<{ route_name: string; origin: string; destination: string; distance_km: number; standard_rate_per_ton: number; commission: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [viewingTrip, setViewingTrip] = useState<Trip | null>(null);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyTrip);
@@ -629,6 +638,9 @@ export default function TripsPage() {
     }
 
     toast.success(`${ready.length} trip(s) imported`);
+    const listed = ready.slice(0, 8).map((trip) => `${trip.vehicle_number} ${trip.route_name}`).join(', ');
+    const extra = ready.length > 8 ? ` and ${ready.length - 8} more` : '';
+    recordAudit('add', 'Trip Log', `Imported ${ready.length} trip(s): ${listed}${extra}`);
     resetPdfModal();
     fetchTrips();
   }
@@ -732,6 +744,7 @@ export default function TripsPage() {
         }).eq('id', editingId);
         if (error) { toast.error(error.message); return; }
         toast.success('Trip updated');
+        recordAudit('edit', 'Trip Log', tripAuditLine('Updated', form));
       } else {
         const { data, error } = await supabase.from('trips').insert(payload).select('id').single();
         if (error) { toast.error(error.message); return; }
@@ -744,6 +757,7 @@ export default function TripsPage() {
           if (updateError) { toast.error(updateError.message); return; }
         }
         toast.success('Trip added');
+        recordAudit('add', 'Trip Log', tripAuditLine('Added', form));
       }
       resetFormDialog();
       fetchTrips();
@@ -792,6 +806,7 @@ export default function TripsPage() {
     const { error } = await supabase.from('trips').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     toast.success('Trip deleted');
+    if (trip) recordAudit('delete', 'Trip Log', tripAuditLine('Deleted', trip));
     fetchTrips();
   }
 
@@ -1296,6 +1311,99 @@ export default function TripsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={viewingTrip != null} onOpenChange={(open) => { if (!open) setViewingTrip(null); }}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
+          <DialogHeader>
+            <DialogTitle>Trip</DialogTitle>
+          </DialogHeader>
+          {viewingTrip && (
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm text-gray-500">{formatDate(viewingTrip.date)}</p>
+                  <p className="text-lg font-bold text-gray-900">{viewingTrip.route_name}</p>
+                  <p className="text-sm text-gray-600">{viewingTrip.vehicle_number} · {viewingTrip.driver_name}</p>
+                </div>
+                <p className="text-2xl font-bold text-green-600">{formatCurrency(Number(viewingTrip.total_revenue))}</p>
+              </div>
+              <div>{renderPaymentBadge(viewingTrip)}</div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                <div>
+                  <p className="text-[10px] uppercase text-gray-500">Weight</p>
+                  <p className="font-medium text-gray-800">{Number(viewingTrip.weight_tons).toFixed(2)} T</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase text-gray-500">Distance</p>
+                  <p className="font-medium text-gray-800">{Number(viewingTrip.distance_km || 0)} km</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase text-gray-500">Rate / ton</p>
+                  <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.rate_per_ton))}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase text-gray-500">Commission</p>
+                  <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.commission || 0))}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase text-gray-500">Advance</p>
+                  <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.advance_paid || 0))}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase text-gray-500">Pending</p>
+                  <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.balance_due || 0))}</p>
+                </div>
+                {viewingTrip.payment_expected_date && (
+                  <div className="col-span-2">
+                    <p className="text-[10px] uppercase text-gray-500">Expected payment</p>
+                    <p className="font-medium text-gray-800">{formatDate(viewingTrip.payment_expected_date)}</p>
+                  </div>
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] uppercase text-gray-500">Notes</p>
+                <p className="text-sm text-gray-800 whitespace-pre-wrap">{viewingTrip.notes || '—'}</p>
+              </div>
+              {tripBuiltyUrls(viewingTrip).length > 0 && (
+                <div>
+                  <p className="text-[10px] uppercase text-gray-500 mb-1">
+                    Builty{tripBuiltyUrls(viewingTrip).length > 1 ? ` (${tripBuiltyUrls(viewingTrip).length})` : ''}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {tripBuiltyUrls(viewingTrip).map((url, idx) => (
+                      <button
+                        key={`${viewingTrip.id}-view-builty-${idx}`}
+                        type="button"
+                        className="block max-w-[140px] overflow-hidden rounded border"
+                        onClick={() => openBuiltyGallery(tripBuiltyUrls(viewingTrip), idx)}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt="Builty" className="max-h-32 w-full object-contain bg-gray-50" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  className="flex-1"
+                  onClick={() => {
+                    const trip = viewingTrip;
+                    setViewingTrip(null);
+                    startEdit(trip);
+                  }}
+                >
+                  <Pencil className="h-4 w-4 mr-2" /> Edit
+                </Button>
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setViewingTrip(null)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Single trip add/edit dialog */}
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) resetFormDialog(); else setDialogOpen(true); }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
@@ -1658,6 +1766,14 @@ export default function TripsPage() {
                           size="sm"
                           variant="outline"
                           className="flex-1"
+                          onClick={(e) => { e.stopPropagation(); setViewingTrip(trip); }}
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-1" /> View
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
                           onClick={(e) => { e.stopPropagation(); startEdit(trip); }}
                         >
                           <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
@@ -1782,10 +1898,13 @@ export default function TripsPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => startEdit(trip)}>
+                          <Button variant="ghost" size="icon" title="View" onClick={() => setViewingTrip(trip)}>
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" title="Edit" onClick={() => startEdit(trip)}>
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(trip.id)}>
+                          <Button variant="ghost" size="icon" title="Delete" onClick={() => handleDelete(trip.id)}>
                             <Trash2 className="h-4 w-4 text-red-500" />
                           </Button>
                         </div>

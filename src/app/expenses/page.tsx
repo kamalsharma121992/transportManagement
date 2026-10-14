@@ -36,7 +36,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Pencil, Trash2, ChevronDown, ChevronUp, X, Download, FileText, ImageIcon, Loader2 } from 'lucide-react';
+import { Eye, Pencil, Trash2, ChevronDown, ChevronUp, X, Download, FileText, ImageIcon, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -129,6 +129,7 @@ export default function ExpensesPage() {
   const [partners, setPartners] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [viewingExpense, setViewingExpense] = useState<Expense | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -1022,6 +1023,103 @@ export default function ExpensesPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={viewingExpense != null} onOpenChange={(open) => { if (!open) setViewingExpense(null); }}>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
+            <DialogHeader>
+              <DialogTitle>Expense</DialogTitle>
+            </DialogHeader>
+            {viewingExpense && (
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm text-gray-500">{formatDate(viewingExpense.date)}</p>
+                    <p className="text-2xl font-bold text-red-600">{formatCurrency(Number(viewingExpense.amount))}</p>
+                  </div>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${categoryColor[viewingExpense.category] || 'bg-gray-100 text-gray-800'}`}>
+                    {viewingExpense.category}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                  <div>
+                    <p className="text-[10px] uppercase text-gray-500">Type</p>
+                    <p className="font-medium text-gray-800 capitalize">{viewingExpense.expense_type}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase text-gray-500">Vehicle</p>
+                    <p className="font-medium text-gray-800">{viewingExpense.vehicle_number || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase text-gray-500">Paid by</p>
+                    <p className="font-medium text-gray-800">{viewingExpense.paid_by_person || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase text-gray-500">Given to</p>
+                    <p className="font-medium text-gray-800">{viewingExpense.person || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase text-gray-500">Paid from</p>
+                    <p className="font-medium text-gray-800">{expensePaidFromLabel(viewingExpense, cardFor(viewingExpense))}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase text-gray-500">Entity</p>
+                    <p className="font-medium text-gray-800">{viewingExpense.paid_by || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase text-gray-500">Status</p>
+                    <p className="font-medium text-gray-800">{viewingExpense.status || '—'}</p>
+                  </div>
+                  {viewingExpense.bill_receipt_ref && (
+                    <div>
+                      <p className="text-[10px] uppercase text-gray-500">Bill / receipt</p>
+                      <p className="font-medium text-gray-800 break-all">{viewingExpense.bill_receipt_ref}</p>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase text-gray-500">Description</p>
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{viewingExpense.description || '—'}</p>
+                </div>
+                {expenseImageList(viewingExpense).length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase text-gray-500 mb-1">
+                      Receipt{expenseImageList(viewingExpense).length > 1 ? `s (${expenseImageList(viewingExpense).length})` : ''}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {expenseImageList(viewingExpense).map((url, idx) => (
+                        <button
+                          key={`${viewingExpense.id}-view-${idx}`}
+                          type="button"
+                          className="block max-w-[140px] overflow-hidden rounded border"
+                          onClick={() => openImageGallery(expenseImageList(viewingExpense), idx)}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url} alt="Expense receipt" className="max-h-32 w-full object-contain bg-gray-50" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    className="flex-1"
+                    onClick={() => {
+                      const expense = viewingExpense;
+                      setViewingExpense(null);
+                      startEdit(expense);
+                    }}
+                  >
+                    <Pencil className="h-4 w-4 mr-2" /> Edit
+                  </Button>
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => setViewingExpense(null)}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         <Dialog
           open={imageGallery.length > 0}
           onOpenChange={(open) => { if (!open) { setImageGallery([]); setImageGalleryIndex(0); } }}
@@ -1369,6 +1467,14 @@ export default function ExpensesPage() {
                           size="sm"
                           variant="outline"
                           className="flex-1"
+                          onClick={(e) => { e.stopPropagation(); setViewingExpense(exp); }}
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-1" /> View
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
                           onClick={(e) => { e.stopPropagation(); startEdit(exp); }}
                         >
                           <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
@@ -1496,8 +1602,9 @@ export default function ExpensesPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => startEdit(exp)}><Pencil className="h-4 w-4" /></Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(exp.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                          <Button variant="ghost" size="icon" title="View" onClick={() => setViewingExpense(exp)}><Eye className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" title="Edit" onClick={() => startEdit(exp)}><Pencil className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" title="Delete" onClick={() => handleDelete(exp.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                         </div>
                       </TableCell>
                     </TableRow>
