@@ -1018,3 +1018,5 @@ export default function CapitalPage() {
     </div>
   );
 }
+
+

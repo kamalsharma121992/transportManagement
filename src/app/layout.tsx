@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
@@ -19,7 +20,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full">
       <body className={`${inter.className} h-full bg-gray-50`}>
-        <AppShell>{children}</AppShell>
+        <AppShell>
+          <Suspense fallback={null}>{children}</Suspense>
+        </AppShell>
         <Toaster />
       </body>
     </html>
