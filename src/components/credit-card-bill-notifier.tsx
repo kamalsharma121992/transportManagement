@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { cardBillNotices, enrichBillNotices, fetchCreditCards, type CardBillNotice } from '@/lib/credit-cards';
 
-/** Loads credit cards whose bill generates within 2 days. */
+/** Loads credit cards whose payment is due within 2 days. */
 export function CreditCardBillNotifier({
   onNotices,
 }: {

@@ -1,4 +1,5 @@
 import { supabase, type Driver, type Expense, DRIVER_PAY_CATEGORIES, SALARY_CATEGORIES } from '@/lib/supabase';
+import { releaseExpenseCapital } from '@/lib/expense-capital';
 import { getMonthDateRange } from '@/lib/format';
 
 export type DriverLeaveEntry = {
@@ -846,6 +847,11 @@ async function deleteDriverPayExpenses(params: {
   if (error) throw error;
   if (!data?.length) return 0;
 
+  for (const row of data) {
+    const released = await releaseExpenseCapital(row.id);
+    if (released === 'missing-column') break;
+  }
+
   const { error: delError } = await supabase
     .from('expenses')
     .delete()
@@ -890,6 +896,7 @@ export async function revertLastAllowance(
   if (error) throw error;
   if (!data?.length) throw new Error('No allowance expense found for this month');
 
+  await releaseExpenseCapital(data[0].id);
   const { error: delError } = await supabase.from('expenses').delete().eq('id', data[0].id);
   if (delError) throw delError;
 }

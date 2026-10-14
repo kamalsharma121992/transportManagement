@@ -37,6 +37,8 @@ import { Badge } from '@/components/ui/badge';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
 import { formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
+import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Clock, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -64,18 +66,35 @@ type EditForm = {
 type AlertFilter = 'warning' | 'overdue';
 
 export default function ExpenseAdvancesPage() {
+  const searchParams = useSearchParams();
   const [rows, setRows] = useState<ExpenseAdvanceRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<FilterTab>('open');
+  const [filter, setFilter] = useState<FilterTab>(() => {
+    const tab = searchParams.get('tab');
+    return tab === 'all' || tab === 'settled' || tab === 'open' ? tab : 'open';
+  });
   const [showSummary, setShowSummary] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterPersons, setFilterPersons] = useState<string[]>([]);
-  const [filterAlerts, setFilterAlerts] = useState<AlertFilter[]>([]);
-  const [filterMonth, setFilterMonth] = useState('');
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const [searchInput, setSearchInput] = useState('');
+  const [showFilters, setShowFilters] = useState(() => Boolean(
+    searchParams.get('persons') || searchParams.get('alerts') || searchParams.get('month')
+    || searchParams.get('from') || searchParams.get('dateTo') || searchParams.get('q'),
+  ));
+  const [filterPersons, setFilterPersons] = useState<string[]>(() => splitQueryList(searchParams.get('persons')));
+  const [filterAlerts, setFilterAlerts] = useState<AlertFilter[]>(() => splitQueryList(searchParams.get('alerts')) as AlertFilter[]);
+  const [filterMonth, setFilterMonth] = useState(() => searchParams.get('month') || '');
+  const [filterDateFrom, setFilterDateFrom] = useState(() => searchParams.get('from') || '');
+  const [filterDateTo, setFilterDateTo] = useState(() => searchParams.get('dateTo') || '');
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') || '');
   const searchQuery = useDebouncedValue(searchInput);
+
+  useFilterQuery([
+    { key: 'tab', value: filter, defaultValue: 'open' },
+    { key: 'persons', value: filterPersons },
+    { key: 'alerts', value: filterAlerts },
+    { key: 'month', value: filterMonth },
+    { key: 'from', value: filterDateFrom },
+    { key: 'dateTo', value: filterDateTo },
+    { key: 'q', value: searchQuery },
+  ]);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [partners, setPartners] = useState<string[]>([]);
   const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);

@@ -1,6 +1,7 @@
 import type { Expense } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports';
+import { expensePaidFromLabel, type CreditCard } from '@/lib/credit-cards';
 
 export type ExpenseExportRow = {
   date: string;
@@ -9,7 +10,6 @@ export type ExpenseExportRow = {
   category: string;
   amount: string;
   description: string;
-  entity: string;
   paidBy: string;
   givenTo: string;
   paidFrom: string;
@@ -19,7 +19,7 @@ export type ExpenseExportRow = {
 
 const CSV_HEADERS = [
   'Date', 'Type', 'Vehicle', 'Category', 'Amount', 'Description',
-  'Entity', 'Paid By', 'Given To', 'Paid From', 'Status', 'Bill / Receipt',
+  'Paid By', 'Given To', 'Paid From', 'Status', 'Bill / Receipt',
 ] as const;
 
 function escapeHtml(value: string): string {
@@ -48,48 +48,52 @@ export function expenseExportTotals(expenses: Expense[]) {
   };
 }
 
-export function toExpenseExportRows(expenses: Expense[]): ExpenseExportRow[] {
-  return expenses.map((exp) => ({
-    date: exp.date,
-    type: exp.expense_type,
-    vehicle: exp.vehicle_number || '',
-    category: exp.category,
-    amount: String(exp.amount),
-    description: exp.description || '',
-    entity: exp.paid_by === 'JM transport' ? 'JM' : exp.paid_by,
-    paidBy: exp.paid_by_person || '',
-    givenTo: exp.person || '',
-    paidFrom: exp.payment_source || '',
-    status: exp.status || '',
-    billReceipt: exp.bill_receipt_ref || '',
-  }));
+export function toExpenseExportRows(expenses: Expense[], cards: CreditCard[] = []): ExpenseExportRow[] {
+  const byId = new Map(cards.map((card) => [card.id, card]));
+  return expenses.map((exp) => {
+    const card = exp.card_id ? byId.get(exp.card_id) : undefined;
+    return {
+      date: exp.date,
+      type: exp.expense_type,
+      vehicle: exp.vehicle_number || '',
+      category: exp.category,
+      amount: String(exp.amount),
+      description: exp.description || '',
+      paidBy: exp.paid_by_person || '',
+      givenTo: exp.person || '',
+      paidFrom: expensePaidFromLabel(exp, card),
+      status: exp.status || '',
+      billReceipt: exp.bill_receipt_ref || '',
+    };
+  });
 }
 
-export function downloadExpensesCsv(expenses: Expense[], suffix: string): void {
-  const rows = toExpenseExportRows(expenses);
+export function downloadExpensesCsv(expenses: Expense[], suffix: string, cards: CreditCard[] = []): void {
+  const rows = toExpenseExportRows(expenses, cards);
   const { total, jmTotal, maheshTotal } = expenseExportTotals(expenses);
   downloadCsv(`expenses-${suffix}.csv`, [
     [...CSV_HEADERS],
     ...rows.map((r) => [
       r.date, r.type, r.vehicle, r.category, r.amount, r.description,
-      r.entity, r.paidBy, r.givenTo, r.paidFrom, r.status, r.billReceipt,
+      r.paidBy, r.givenTo, r.paidFrom, r.status, r.billReceipt,
     ]),
     [],
-    ['', '', '', 'TOTAL', String(total), '', '', '', '', '', '', ''],
-    ['', '', '', 'JM', String(jmTotal), '', '', '', '', '', '', ''],
-    ['', '', '', 'Mahesh', String(maheshTotal), '', '', '', '', '', '', ''],
+    ['', '', '', 'TOTAL', String(total), '', '', '', '', '', ''],
+    ['', '', '', 'JM', String(jmTotal), '', '', '', '', '', ''],
+    ['', '', '', 'Mahesh', String(maheshTotal), '', '', '', '', '', ''],
   ]);
 }
 
 function buildExpensesPdfHtml(params: {
   expenses: Expense[];
+  cards?: CreditCard[];
   filterLabel: string;
   total: number;
   jmTotal: number;
   maheshTotal: number;
   generatedOn: string;
 }): string {
-  const rows = toExpenseExportRows(params.expenses);
+  const rows = toExpenseExportRows(params.expenses, params.cards);
   const tableRows = rows.length
     ? rows.map((r) => `
         <tr>
@@ -99,12 +103,11 @@ function buildExpensesPdfHtml(params: {
           <td>${escapeHtml(r.category)}</td>
           <td class="num">${escapeHtml(formatCurrency(Number(r.amount)))}</td>
           <td>${escapeHtml(r.description)}</td>
-          <td>${escapeHtml(r.entity)}</td>
           <td>${escapeHtml(r.paidBy)}</td>
           <td>${escapeHtml(r.givenTo)}</td>
           <td>${escapeHtml(r.paidFrom)}</td>
         </tr>`).join('')
-    : '<tr><td colspan="10" class="muted">No expenses</td></tr>';
+    : '<tr><td colspan="9" class="muted">No expenses</td></tr>';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -142,7 +145,7 @@ function buildExpensesPdfHtml(params: {
     <thead>
       <tr>
         <th>Date</th><th>Type</th><th>Vehicle</th><th>Category</th>
-        <th class="num">Amount</th><th>Description</th><th>Entity</th>
+        <th class="num">Amount</th><th>Description</th>
         <th>Paid by</th><th>Given to</th><th>Paid from</th>
       </tr>
     </thead>
@@ -151,7 +154,7 @@ function buildExpensesPdfHtml(params: {
       <tr>
         <td colspan="4" class="total-label">Total</td>
         <td class="num">${escapeHtml(formatCurrency(params.total))}</td>
-        <td colspan="5"></td>
+        <td colspan="4"></td>
       </tr>
     </tfoot>
   </table>
@@ -161,6 +164,7 @@ function buildExpensesPdfHtml(params: {
 
 export function printExpensesPdf(params: {
   expenses: Expense[];
+  cards?: CreditCard[];
   filterLabel: string;
   total: number;
   jmTotal: number;

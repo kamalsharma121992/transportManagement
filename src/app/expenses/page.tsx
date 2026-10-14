@@ -12,13 +12,15 @@ import {
   paymentModeForCategory,
 } from '@/lib/expense-categories';
 import {
-  cardAssetDetails,
+  expenseCreditCardName,
+  expensePaidFromLabel,
   fetchCreditCards,
   filterCardsByHolder,
   formatCardOption,
   type CreditCard,
 } from '@/lib/credit-cards';
 import { createExpenseAdvanceFromExpense } from '@/lib/expense-advances';
+import { releaseExpenseCapital, savedExpenseNeedsCapital, syncExpenseCapital, type ExpenseCapitalInput } from '@/lib/expense-capital';
 import { removeExpenseImageMany, uploadExpenseImageMany, validateExpenseImageFile } from '@/lib/expense-image';
 import { MAX_ENTITY_IMAGES, normalizeImageUrls } from '@/lib/image-urls';
 import { MultiImageField } from '@/components/multi-image-field';
@@ -40,13 +42,14 @@ import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { ActiveFiltersBar } from '@/components/active-filters-bar';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
-import { applyInFilter, formatMultiFilterLabel } from '@/lib/filter-helpers';
+import { applyInFilter, applyInNumberFilter, formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
+import { readMonthParam, readSortParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
 import { downloadExpensesCsv, expenseExportSuffix, expenseExportTotals, printExpensesPdf } from '@/lib/expense-export';
@@ -68,6 +71,34 @@ const emptyForm = {
   credit_card_id: '',
   card_details: '',
 };
+
+function capitalResultMessage(
+  result: Awaited<ReturnType<typeof syncExpenseCapital>>,
+  saved: 'added' | 'updated',
+): string {
+  if (result === 'missing-column') {
+    return `Expense ${saved}. Run supabase/capital_source_expense.sql in Supabase so Capital stays linked.`;
+  }
+  if (result === 'settled') {
+    return `Expense ${saved}. This charge was already paid in Capital, so that row was left as it is.`;
+  }
+  if (result === 'created' || result === 'synced') {
+    return saved === 'added'
+      ? 'Expense added + capital contribution recorded'
+      : 'Expense updated';
+  }
+  if (result === 'removed') return `Expense ${saved}. The unpaid capital charge was removed.`;
+  return saved === 'added' ? 'Expense added' : 'Expense updated';
+}
+
+function isNamedPartner(source: string): boolean {
+  return (JM_PARTNERS as readonly string[]).includes(source);
+}
+
+/** Cards belong to the named payer, or to Paid By when Paid From is Partner. */
+function cardHolderForSource(paymentSource: string, paidByPerson: string): string {
+  return isNamedPartner(paymentSource) ? paymentSource : paidByPerson;
+}
 
 const typeColors: Record<string, string> = {
   vehicle: 'bg-blue-100 text-blue-800',
@@ -100,7 +131,15 @@ export default function ExpensesPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
-  const [showFilters, setShowFilters] = useState(false);
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const initialSort = readSortParam(searchParams, 'date', 'desc');
+  const [showFilters, setShowFilters] = useState(() => Boolean(
+    searchParams.get('from') || searchParams.get('dateTo') || searchParams.get('type')
+    || searchParams.get('vehicles') || searchParams.get('categories') || searchParams.get('persons')
+    || searchParams.get('paidBy') || searchParams.get('entities') || searchParams.get('sources') || searchParams.get('cards')
+    || searchParams.get('q')
+    || (searchParams.has('month') && searchParams.get('month') !== currentMonth),
+  ));
   const [showSummary, setShowSummary] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [categoriesByType, setCategoriesByType] = useState(DEFAULT_CATEGORIES_BY_TYPE);
@@ -118,21 +157,37 @@ export default function ExpensesPage() {
   const [imageGalleryIndex, setImageGalleryIndex] = useState(0);
   const [selectedMap, setSelectedMap] = useState<Record<number, Expense>>({});
 
-  // Filters — default to current month
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const [filterType, setFilterType] = useState<ExpenseType | ''>('');
-  const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
-  const [filterCategories, setFilterCategories] = useState<string[]>([]);
-  const [filterPersons, setFilterPersons] = useState<string[]>([]);
-  const [filterPaidByPersons, setFilterPaidByPersons] = useState<string[]>([]);
-  const [filterPaidByEntities, setFilterPaidByEntities] = useState<string[]>([]);
-  const [filterPaymentSources, setFilterPaymentSources] = useState<string[]>([]);
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterMonth, setFilterMonth] = useState(currentMonth);
-  const [searchInput, setSearchInput] = useState('');
+  const [filterType, setFilterType] = useState<ExpenseType | ''>(() => (searchParams.get('type') || '') as ExpenseType | '');
+  const [filterVehicles, setFilterVehicles] = useState<string[]>(() => splitQueryList(searchParams.get('vehicles')));
+  const [filterCategories, setFilterCategories] = useState<string[]>(() => splitQueryList(searchParams.get('categories')));
+  const [filterPersons, setFilterPersons] = useState<string[]>(() => splitQueryList(searchParams.get('persons')));
+  const [filterPaidByPersons, setFilterPaidByPersons] = useState<string[]>(() => splitQueryList(searchParams.get('paidBy')));
+  const [filterPaidByEntities, setFilterPaidByEntities] = useState<string[]>(() => splitQueryList(searchParams.get('entities')));
+  const [filterPaymentSources, setFilterPaymentSources] = useState<string[]>(() => splitQueryList(searchParams.get('sources')));
+  const [filterCards, setFilterCards] = useState<string[]>(() => splitQueryList(searchParams.get('cards')));
+  const [filterDateFrom, setFilterDateFrom] = useState(() => searchParams.get('from') || '');
+  const [filterDateTo, setFilterDateTo] = useState(() => searchParams.get('dateTo') || '');
+  const [filterMonth, setFilterMonth] = useState(() => readMonthParam(searchParams, currentMonth));
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') || '');
   const searchQuery = useDebouncedValue(searchInput);
-  const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
+  const { sortColumn, sortDirection, toggleSort } = useTableSort(initialSort.column, initialSort.dir);
+
+  useFilterQuery([
+    { key: 'type', value: filterType },
+    { key: 'vehicles', value: filterVehicles },
+    { key: 'categories', value: filterCategories },
+    { key: 'persons', value: filterPersons },
+    { key: 'paidBy', value: filterPaidByPersons },
+    { key: 'entities', value: filterPaidByEntities },
+    { key: 'sources', value: filterPaymentSources },
+    { key: 'cards', value: filterCards },
+    { key: 'from', value: filterDateFrom },
+    { key: 'dateTo', value: filterDateTo },
+    { key: 'month', value: filterMonth, defaultValue: currentMonth },
+    { key: 'q', value: searchQuery },
+    { key: 'sort', value: sortColumn, defaultValue: 'date' },
+    { key: 'dir', value: sortDirection, defaultValue: 'desc' },
+  ], ['add']);
   const [summary, setSummary] = useState({ total: 0, jmTotal: 0, maheshTotal: 0 });
 
   const {
@@ -145,7 +200,7 @@ export default function ExpensesPage() {
     totalPages,
   } = useServerPagination([
     filterType, filterVehicles, filterCategories, filterPersons,
-    filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterDateFrom, filterDateTo, filterMonth, searchQuery,
+    filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterCards, filterDateFrom, filterDateTo, filterMonth, searchQuery,
     sortColumn, sortDirection,
   ]);
 
@@ -167,6 +222,7 @@ export default function ExpensesPage() {
     q = applyInFilter(q, 'paid_by_person', filterPaidByPersons);
     q = applyInFilter(q, 'paid_by', filterPaidByEntities);
     q = applyInFilter(q, 'payment_source', filterPaymentSources);
+    q = applyInNumberFilter(q, 'card_id', filterCards);
     if (filterMonth) {
       const { from, to } = getMonthDateRange(filterMonth);
       q = q.gte('date', from).lte('date', to);
@@ -256,10 +312,11 @@ export default function ExpensesPage() {
 
       const totals = expenseExportTotals(rows);
       if (format === 'csv') {
-        downloadExpensesCsv(rows, suffix);
+        downloadExpensesCsv(rows, suffix, creditCards);
       } else {
         printExpensesPdf({
           expenses: rows,
+          cards: creditCards,
           filterLabel,
           ...totals,
           generatedOn: new Date().toISOString().split('T')[0],
@@ -306,12 +363,12 @@ export default function ExpensesPage() {
     }
   }
 
-  const hasActiveFilters = filterMonth !== currentMonth || !!filterType || filterVehicles.length > 0 || filterCategories.length > 0 || filterPersons.length > 0 || filterPaidByPersons.length > 0 || filterPaidByEntities.length > 0 || filterPaymentSources.length > 0 || !!filterDateFrom || !!filterDateTo || !!searchQuery;
+  const hasActiveFilters = filterMonth !== currentMonth || !!filterType || filterVehicles.length > 0 || filterCategories.length > 0 || filterPersons.length > 0 || filterPaidByPersons.length > 0 || filterPaidByEntities.length > 0 || filterPaymentSources.length > 0 || filterCards.length > 0 || !!filterDateFrom || !!filterDateTo || !!searchQuery;
 
   function clearFilters() {
     setFilterType(''); setFilterVehicles([]); setFilterCategories([]);
     setFilterPersons([]); setFilterPaidByPersons([]); setFilterPaidByEntities([]);
-    setFilterPaymentSources([]);
+    setFilterPaymentSources([]); setFilterCards([]);
     setFilterDateFrom(''); setFilterDateTo(''); setFilterMonth(currentMonth);
     setSearchInput('');
   }
@@ -354,25 +411,32 @@ export default function ExpensesPage() {
     const label = formatMultiFilterLabel('Paid from', filterPaymentSources);
     if (label) activeFilterLabels.push(label);
   }
+  if (filterCards.length > 0) {
+    const cardLabels = Object.fromEntries(creditCards.map((card) => [String(card.id), expenseCreditCardName(card)]));
+    const label = formatMultiFilterLabel('CC', filterCards, cardLabels);
+    if (label) activeFilterLabels.push(label);
+  }
   if (searchQuery) activeFilterLabels.push('Search: ' + searchQuery);
 
   useEffect(() => {
     setExpandedId(null);
     fetchExpenses();
-  }, [page, pageSize, filterType, filterVehicles, filterCategories, filterPersons, filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
+  }, [page, pageSize, filterType, filterVehicles, filterCategories, filterPersons, filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterCards, filterDateFrom, filterDateTo, filterMonth, searchQuery, sortColumn, sortDirection]);
 
   useEffect(() => {
     setSelectedMap({});
-  }, [filterType, filterVehicles, filterCategories, filterPersons, filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterDateFrom, filterDateTo, filterMonth, searchQuery]);
+  }, [filterType, filterVehicles, filterCategories, filterPersons, filterPaidByPersons, filterPaidByEntities, filterPaymentSources, filterCards, filterDateFrom, filterDateTo, filterMonth, searchQuery]);
 
   useEffect(() => {
-    if (searchParams.get('add') === '1') {
-      resetExpenseImageState();
-      setEditingId(null);
-      setForm(emptyForm);
-      setDialogOpen(true);
-      router.replace('/expenses', { scroll: false });
-    }
+    if (searchParams.get('add') !== '1') return;
+    resetExpenseImageState();
+    setEditingId(null);
+    setForm(emptyForm);
+    setDialogOpen(true);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('add');
+    const next = params.toString();
+    router.replace(next ? `/expenses?${next}` : '/expenses', { scroll: false });
   }, [searchParams, router]);
 
   function clearPendingImages() {
@@ -442,7 +506,7 @@ export default function ExpensesPage() {
   }
 
   useEffect(() => {
-    fetchCreditCards().then(({ data, tableMissing }) => {
+    fetchCreditCards(false).then(({ data, tableMissing }) => {
       setCreditCards(data);
       setCardsTableMissing(tableMissing);
     });
@@ -506,21 +570,23 @@ export default function ExpensesPage() {
     const { payment_mode, card_details, credit_card_id, ...rest } = form;
     const cardId = credit_card_id ? Number(credit_card_id) : null;
     const selectedCard = creditCards.find((c) => c.id === cardId);
+    const cardHolder = cardHolderForSource(form.payment_source, form.paid_by_person);
+    const cardsForHolder = filterCardsByHolder(creditCards, cardHolder).filter((card) => card.is_active);
 
     if (
-      form.payment_source === 'Partner'
+      form.payment_source !== 'Revenue'
       && payment_mode === 'Credit Card'
       && !cardId
       && !card_details.trim()
       && !cardsTableMissing
-      && filterCardsByHolder(creditCards, form.paid_by_person).length > 0
+      && cardsForHolder.length > 0
     ) {
       toast.error('Please select a credit card');
       return;
     }
 
     const useCard =
-      form.payment_source === 'Partner'
+      form.payment_source !== 'Revenue'
       && payment_mode === 'Credit Card'
       && cardId
       && !cardsTableMissing;
@@ -533,6 +599,19 @@ export default function ExpensesPage() {
       card_id: useCard ? cardId : null,
       image_urls: expenseImageUrls,
       image_url: expenseImageUrls[0] || null,
+    };
+    const capitalInput: ExpenseCapitalInput = {
+      date: form.date,
+      amount: Number(form.amount),
+      category: form.category,
+      description: form.description || null,
+      paymentSource: form.payment_source,
+      paidByPerson: form.paid_by_person || null,
+      paymentMode: payment_mode,
+      cardId: useCard ? cardId : null,
+      card: selectedCard,
+      cardDetails: card_details,
+      cardHolder,
     };
     setSaving(true);
     try {
@@ -564,7 +643,11 @@ export default function ExpensesPage() {
             toast.error(syncErr instanceof Error ? syncErr.message : 'Expense saved but expense advance sync failed');
           }
         }
-        toast.success('Expense updated');
+        const original = expenses.find((row) => row.id === editingId);
+        const capitalResult = await syncExpenseCapital(editingId, capitalInput, {
+          createIfMissing: original ? !savedExpenseNeedsCapital(original) : false,
+        });
+        toast.success(capitalResultMessage(capitalResult, 'updated'));
       } else {
         const { data: inserted, error } = await supabase.from('expenses').insert(payload).select('id').single();
         if (error) { toast.error(error.message); return; }
@@ -595,21 +678,9 @@ export default function ExpensesPage() {
           } catch (syncErr) {
             toast.error(syncErr instanceof Error ? syncErr.message : 'Expense saved but expense advance sync failed');
           }
-        } else if (form.payment_source === 'Partner' && form.paid_by_person) {
-          const { error: ccErr } = await supabase.from('capital_contributions').insert({
-            date: form.date,
-            contributor: form.paid_by_person,
-            contribution_type: payment_mode,
-            value: Number(form.amount),
-            description: form.description || form.category,
-            asset_details: cardAssetDetails(selectedCard, card_details),
-            ...(useCard ? { card_id: cardId } : {}),
-            status: 'Unpaid',
-            paid_by: 'JM transport',
-            payment_source: null,
-          });
-          if (ccErr) toast.error('Expense saved but capital entry failed: ' + ccErr.message);
-          else toast.success('Expense added + capital contribution recorded');
+        } else if (inserted?.id) {
+          const capitalResult = await syncExpenseCapital(inserted.id, capitalInput);
+          toast.success(capitalResultMessage(capitalResult, 'added'));
         } else {
           toast.success('Expense added');
         }
@@ -657,14 +728,32 @@ export default function ExpensesPage() {
     if (urls.length > 0) {
       await removeExpenseImageMany(urls);
     }
+    let keptPaid = false;
+    let linkMissing = false;
+    try {
+      const released = await releaseExpenseCapital(id);
+      keptPaid = released === 'kept-paid';
+      linkMissing = released === 'missing-column';
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not update the capital charge');
+      return;
+    }
     const { error } = await supabase.from('expenses').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
-    toast.success('Expense deleted');
+    if (linkMissing) toast.success('Expense deleted. Run supabase/capital_source_expense.sql in Supabase so Capital stays linked.');
+    else if (keptPaid) toast.success('Expense deleted. The paid capital charge was kept.');
+    else toast.success('Expense deleted');
     fetchExpenses();
   }
 
   const availableCategories = form.expense_type ? categoriesByType[form.expense_type] : [];
-  const holderCards = filterCardsByHolder(creditCards, form.paid_by_person);
+  const cardHolder = cardHolderForSource(form.payment_source, form.paid_by_person);
+  const holderCards = filterCardsByHolder(creditCards, cardHolder).filter((card) => card.is_active);
+
+  function cardFor(exp: Expense): CreditCard | undefined {
+    if (!exp.card_id) return undefined;
+    return creditCards.find((card) => card.id === exp.card_id);
+  }
 
   return (
     <div className="space-y-4">
@@ -818,11 +907,24 @@ export default function ExpensesPage() {
                 </div>
                 <div>
                   <Label>Paid From</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.payment_source} onChange={(e) => setForm({ ...form, payment_source: e.target.value })}>
+                  <select
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={form.payment_source}
+                    onChange={(e) => {
+                      const payment_source = e.target.value;
+                      setForm({
+                        ...form,
+                        payment_source,
+                        credit_card_id: '',
+                        card_details: '',
+                        ...(payment_source === 'Revenue' ? { payment_mode: 'Cash' } : {}),
+                      });
+                    }}
+                  >
                     {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
-                {form.payment_source === 'Partner' && (
+                {form.payment_source !== 'Revenue' && (
                   <>
                     <div>
                       <Label>Payment Mode</Label>
@@ -854,8 +956,8 @@ export default function ExpensesPage() {
                               onChange={(e) => setForm({ ...form, card_details: e.target.value })}
                               placeholder="e.g. HDFC VISA (add cards in Admin)"
                             />
-                            {!cardsTableMissing && form.paid_by_person && (
-                              <p className="text-xs text-amber-600 mt-1">No cards for {form.paid_by_person}. Add one in Admin → Credit Cards.</p>
+                            {!cardsTableMissing && cardHolder && (
+                              <p className="text-xs text-amber-600 mt-1">No cards for {cardHolder}. Add one in Admin → Credit Cards.</p>
                             )}
                           </>
                         )}
@@ -1094,6 +1196,14 @@ export default function ExpensesPage() {
                   placeholder="All"
                   searchPlaceholder="Search source..."
                 />
+                <MultiSelectFilter
+                  label="CC"
+                  options={creditCards.map((card) => ({ value: String(card.id), label: expenseCreditCardName(card) }))}
+                  selected={filterCards}
+                  onChange={setFilterCards}
+                  placeholder="All cards"
+                  searchPlaceholder="Search card..."
+                />
               </div>
               {hasActiveFilters && (
                 <button onClick={clearFilters} className="mt-3 flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium">
@@ -1174,17 +1284,6 @@ export default function ExpensesPage() {
                     <div className="border-t px-4 py-3 space-y-2 bg-gray-50/80">
                       <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
                         <div>
-                          <p className="text-[10px] uppercase text-gray-500">Entity</p>
-                          <p>
-                            <span className={cn(
-                              'px-2 py-0.5 rounded-full text-xs font-medium',
-                              exp.paid_by === 'Mahesh' ? 'bg-orange-100 text-orange-800' : 'bg-sky-100 text-sky-800',
-                            )}>
-                              {exp.paid_by === 'JM transport' ? 'JM' : 'Mahesh'}
-                            </span>
-                          </p>
-                        </div>
-                        <div>
                           <p className="text-[10px] uppercase text-gray-500">Paid by</p>
                           <p className="font-medium text-gray-800">{exp.paid_by_person || '—'}</p>
                         </div>
@@ -1195,7 +1294,7 @@ export default function ExpensesPage() {
                               'px-2 py-0.5 rounded-full text-xs font-medium',
                               exp.payment_source === 'Revenue' ? 'bg-green-100 text-green-800' : 'bg-violet-100 text-violet-800',
                             )}>
-                              {exp.payment_source || 'Partner'}
+                              {expensePaidFromLabel(exp, cardFor(exp))}
                             </span>
                           </p>
                         </div>
@@ -1292,7 +1391,6 @@ export default function ExpensesPage() {
                   <TableHead>Category</TableHead>
                   <SortableTableHead label="Amount" column="amount" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
                   <TableHead>Description</TableHead>
-                  <TableHead>Entity</TableHead>
                   <TableHead>Paid By</TableHead>
                   <TableHead>Given To</TableHead>
                   <TableHead>Paid From</TableHead>
@@ -1302,9 +1400,9 @@ export default function ExpensesPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={13} className="text-center py-8">Loading...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={12} className="text-center py-8">Loading...</TableCell></TableRow>
                 ) : expenses.length === 0 ? (
-                  <TableRow><TableCell colSpan={13} className="text-center py-8 text-gray-500">No expenses found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={12} className="text-center py-8 text-gray-500">No expenses found</TableCell></TableRow>
                 ) : (
                   expenses.map((exp) => (
                     <TableRow key={exp.id} className={selectedMap[exp.id] ? 'bg-blue-50/40' : undefined}>
@@ -1333,16 +1431,11 @@ export default function ExpensesPage() {
                       </TableCell>
                       <TableCell className="text-right font-medium text-red-600 whitespace-nowrap">{formatCurrency(Number(exp.amount))}</TableCell>
                       <TableCell className="max-w-[180px] truncate">{exp.description}</TableCell>
-                      <TableCell>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${exp.paid_by === 'Mahesh' ? 'bg-orange-100 text-orange-800' : 'bg-sky-100 text-sky-800'}`}>
-                          {exp.paid_by === 'JM transport' ? 'JM' : 'Mahesh'}
-                        </span>
-                      </TableCell>
                       <TableCell className="whitespace-nowrap">{exp.paid_by_person || <span className="text-gray-300">-</span>}</TableCell>
                       <TableCell className="whitespace-nowrap">{exp.person || <span className="text-gray-300">-</span>}</TableCell>
                       <TableCell>
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${exp.payment_source === 'Revenue' ? 'bg-green-100 text-green-800' : 'bg-violet-100 text-violet-800'}`}>
-                          {exp.payment_source || 'Partner'}
+                          {expensePaidFromLabel(exp, cardFor(exp))}
                         </span>
                       </TableCell>
                       <TableCell>

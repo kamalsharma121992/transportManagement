@@ -27,10 +27,10 @@ function whenLabel(days: number | null): string {
 }
 
 function payNotice(row: CardBillRow) {
-  if (row.daysUntil == null || billLeft(row) <= 0) return null;
+  if (billLeft(row) <= 0) return null;
   return {
     card: row.card,
-    daysUntil: row.daysUntil,
+    daysUntil: row.daysUntil ?? 0,
     amount: row.amount,
     paid: row.paid,
   };
@@ -63,7 +63,7 @@ export default function CreditCardsPage() {
       <div className="grid grid-cols-3 gap-3">
         <Card className={dueSoon.length ? 'border-amber-300' : ''}>
           <CardContent className="py-3 px-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Bills within 2 days</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Due within 2 days</p>
             <p className="text-2xl font-bold text-amber-700">{dueSoon.length}</p>
           </CardContent>
         </Card>
@@ -115,11 +115,11 @@ export default function CreditCardsPage() {
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div>
                     <p className="text-[10px] uppercase text-gray-500">Bill generate</p>
-                    <p>{row.card.bill_generate_day ? `${ordinalDay(row.card.bill_generate_day)} · ${whenLabel(row.daysUntil)}` : '—'}</p>
+                    <p>{row.card.bill_generate_day ? ordinalDay(row.card.bill_generate_day) : '—'}</p>
                   </div>
                   <div>
                     <p className="text-[10px] uppercase text-gray-500">Bill pay</p>
-                    <p>{row.card.bill_pay_day ? ordinalDay(row.card.bill_pay_day) : '—'}</p>
+                    <p>{row.card.bill_pay_day ? `${ordinalDay(row.card.bill_pay_day)} · ${whenLabel(row.daysUntil)}` : '—'}</p>
                   </div>
                 </div>
                 {notice ? (
@@ -167,16 +167,18 @@ export default function CreditCardsPage() {
                       <TableCell className="font-medium">{row.card.label}</TableCell>
                       <TableCell>{row.card.holder}</TableCell>
                       <TableCell>
-                        {row.card.bill_generate_day ? (
+                        {row.card.bill_generate_day ? ordinalDay(row.card.bill_generate_day) : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {row.card.bill_pay_day ? (
                           <span>
-                            {ordinalDay(row.card.bill_generate_day)}
+                            {ordinalDay(row.card.bill_pay_day)}
                             <span className={cn('ml-2 text-xs', row.dueSoon ? 'text-amber-800 font-medium' : 'text-gray-500')}>
                               {whenLabel(row.daysUntil)}
                             </span>
                           </span>
                         ) : '—'}
                       </TableCell>
-                      <TableCell>{row.card.bill_pay_day ? ordinalDay(row.card.bill_pay_day) : '—'}</TableCell>
                       <TableCell className="text-sm text-gray-600 whitespace-nowrap">
                         {row.cycleFrom && row.cycleTo ? `${formatDate(row.cycleFrom)} – ${formatDate(row.cycleTo)}` : '—'}
                       </TableCell>

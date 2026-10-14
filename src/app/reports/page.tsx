@@ -1,6 +1,8 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { readMonthParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
 import { supabase, PAID_BY_ENTITIES } from '@/lib/supabase';
 import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
 import {
@@ -54,13 +56,26 @@ const emptyMonthly: MonthlyPlReport = {
 };
 
 export default function ReportsPage() {
+  const searchParams = useSearchParams();
   const currentMonth = new Date().toISOString().slice(0, 7);
-  const [tab, setTab] = useState<Tab>('monthly');
-  const [filterMonth, setFilterMonth] = useState(currentMonth);
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
-  const [filterEntities, setFilterEntities] = useState<string[]>([]);
+  const [tab, setTab] = useState<Tab>(() => {
+    const value = searchParams.get('tab');
+    return value === 'vehicle' || value === 'daily' || value === 'monthly' ? value : 'monthly';
+  });
+  const [filterMonth, setFilterMonth] = useState(() => readMonthParam(searchParams, currentMonth));
+  const [filterDateFrom, setFilterDateFrom] = useState(() => searchParams.get('from') || '');
+  const [filterDateTo, setFilterDateTo] = useState(() => searchParams.get('dateTo') || '');
+  const [filterVehicles, setFilterVehicles] = useState<string[]>(() => splitQueryList(searchParams.get('vehicles')));
+  const [filterEntities, setFilterEntities] = useState<string[]>(() => splitQueryList(searchParams.get('entities')));
+
+  useFilterQuery([
+    { key: 'tab', value: tab, defaultValue: 'monthly' },
+    { key: 'month', value: filterMonth, defaultValue: currentMonth },
+    { key: 'from', value: filterDateFrom },
+    { key: 'dateTo', value: filterDateTo },
+    { key: 'vehicles', value: filterVehicles },
+    { key: 'entities', value: filterEntities },
+  ]);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

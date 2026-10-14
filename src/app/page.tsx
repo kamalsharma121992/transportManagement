@@ -16,6 +16,8 @@ import { ActiveFiltersBar } from '@/components/active-filters-bar';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
 import { formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { readMonthParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
+import { useSearchParams } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
@@ -56,25 +58,43 @@ const emptyStats: DashboardStats = {
 };
 
 export default function Dashboard() {
+  const searchParams = useSearchParams();
+  const currentMonth = new Date().toISOString().slice(0, 7);
   const [stats, setStats] = useState<DashboardStats>(emptyStats);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [partners, setPartners] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const hasLoadedRef = useRef(false);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(() => Boolean(
+    searchParams.get('from') || searchParams.get('dateTo') || searchParams.get('entities')
+    || searchParams.get('paidBy') || searchParams.get('persons') || searchParams.get('vehicles')
+    || searchParams.get('sources') || searchParams.get('q')
+    || (searchParams.has('month') && searchParams.get('month') !== currentMonth),
+  ));
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const [filterMonth, setFilterMonth] = useState(currentMonth);
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterPaidByEntities, setFilterPaidByEntities] = useState<string[]>([]);
-  const [filterPaidByPersons, setFilterPaidByPersons] = useState<string[]>([]);
-  const [filterPersons, setFilterPersons] = useState<string[]>([]);
-  const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
-  const [filterPaymentSources, setFilterPaymentSources] = useState<string[]>([]);
-  const [searchInput, setSearchInput] = useState('');
+  const [filterMonth, setFilterMonth] = useState(() => readMonthParam(searchParams, currentMonth));
+  const [filterDateFrom, setFilterDateFrom] = useState(() => searchParams.get('from') || '');
+  const [filterDateTo, setFilterDateTo] = useState(() => searchParams.get('dateTo') || '');
+  const [filterPaidByEntities, setFilterPaidByEntities] = useState<string[]>(() => splitQueryList(searchParams.get('entities')));
+  const [filterPaidByPersons, setFilterPaidByPersons] = useState<string[]>(() => splitQueryList(searchParams.get('paidBy')));
+  const [filterPersons, setFilterPersons] = useState<string[]>(() => splitQueryList(searchParams.get('persons')));
+  const [filterVehicles, setFilterVehicles] = useState<string[]>(() => splitQueryList(searchParams.get('vehicles')));
+  const [filterPaymentSources, setFilterPaymentSources] = useState<string[]>(() => splitQueryList(searchParams.get('sources')));
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') || '');
   const searchQuery = useDebouncedValue(searchInput);
+
+  useFilterQuery([
+    { key: 'month', value: filterMonth, defaultValue: currentMonth },
+    { key: 'from', value: filterDateFrom },
+    { key: 'dateTo', value: filterDateTo },
+    { key: 'entities', value: filterPaidByEntities },
+    { key: 'paidBy', value: filterPaidByPersons },
+    { key: 'persons', value: filterPersons },
+    { key: 'vehicles', value: filterVehicles },
+    { key: 'sources', value: filterPaymentSources },
+    { key: 'q', value: searchQuery },
+  ]);
 
   const DASHBOARD_PAYMENT_SOURCES = ['Revenue', 'Kamal', 'Bimal', 'Subham', 'Mohit', 'Partner'];
 

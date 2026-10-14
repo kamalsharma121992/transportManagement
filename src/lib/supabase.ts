@@ -161,6 +161,7 @@ export type CapitalContribution = {
   paid_by: string;
   payment_source: string | null;
   card_id: number | null;
+  source_expense_id: number | null;
 };
 
 export const EXPENSE_TYPES: { value: ExpenseType; label: string }[] = [

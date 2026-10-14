@@ -36,9 +36,33 @@ import { getSupabaseRange } from '@/lib/pagination';
 import { buildTextSearchFilter, CAPITAL_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
+import { useFilterQuery } from '@/hooks/use-filter-query';
 import { SortableTableHead } from '@/components/sortable-table-head';
 
 const CAPITAL_TYPES = ['Credit Card', 'Cash', 'Bank Transfer', 'Payout', 'Card Payment'] as const;
+
+function splitList(value: string | null): string[] {
+  if (!value) return [];
+  return value.split(',').filter(Boolean);
+}
+
+function readCapitalFilters(
+  params: { get: (key: string) => string | null; has: (key: string) => boolean },
+  currentMonth: string,
+) {
+  return {
+    status: params.get('status') || '',
+    contributors: splitList(params.get('contributors')),
+    types: splitList(params.get('types')),
+    month: params.has('month') ? (params.get('month') || '') : currentMonth,
+    from: params.get('from') || '',
+    to: params.get('dateTo') || '',
+    cards: splitList(params.get('cards')),
+    q: params.get('q') || '',
+    sort: params.get('sort') || 'date',
+    dir: params.get('dir') === 'asc' ? 'asc' as const : 'desc' as const,
+  };
+}
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -57,6 +81,7 @@ export default function CapitalPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const currentMonth = new Date().toISOString().slice(0, 7);
+  const [initialFilters] = useState(() => readCapitalFilters(searchParams, currentMonth));
   const [contributions, setContributions] = useState<CapitalContribution[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -79,17 +104,24 @@ export default function CapitalPage() {
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [cardsTableMissing, setCardsTableMissing] = useState(false);
   const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
-  const [filterStatus, setFilterStatus] = useState<string>('');
-  const [filterContributors, setFilterContributors] = useState<string[]>([]);
-  const [filterTypes, setFilterTypes] = useState<string[]>([]);
-  const [filterMonth, setFilterMonth] = useState(currentMonth);
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterCreditCards, setFilterCreditCards] = useState<string[]>([]);
-  const [showFilters, setShowFilters] = useState(false);
-  const [searchInput, setSearchInput] = useState('');
+  const [filterStatus, setFilterStatus] = useState(initialFilters.status);
+  const [filterContributors, setFilterContributors] = useState(initialFilters.contributors);
+  const [filterTypes, setFilterTypes] = useState(initialFilters.types);
+  const [filterMonth, setFilterMonth] = useState(initialFilters.month);
+  const [filterDateFrom, setFilterDateFrom] = useState(initialFilters.from);
+  const [filterDateTo, setFilterDateTo] = useState(initialFilters.to);
+  const [filterCreditCards, setFilterCreditCards] = useState(initialFilters.cards);
+  const [showFilters, setShowFilters] = useState(
+    initialFilters.contributors.length > 0
+    || initialFilters.types.length > 0
+    || initialFilters.cards.length > 0
+    || !!initialFilters.from
+    || !!initialFilters.to
+    || initialFilters.month !== currentMonth,
+  );
+  const [searchInput, setSearchInput] = useState(initialFilters.q);
   const searchQuery = useDebouncedValue(searchInput);
-  const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
+  const { sortColumn, sortDirection, toggleSort } = useTableSort(initialFilters.sort, initialFilters.dir);
   const [summary, setSummary] = useState({
     total: 0,
     paidTotal: 0,
@@ -292,8 +324,24 @@ export default function CapitalPage() {
       payer_card_id: '',
     });
     setPayoutDialogOpen(true);
-    router.replace('/capital', { scroll: false });
+    const params = new URLSearchParams(searchParams.toString());
+    ['pay', 'to', 'amount', 'note', 'card'].forEach((key) => params.delete(key));
+    const next = params.toString();
+    router.replace(next ? `/capital?${next}` : '/capital', { scroll: false });
   }, [searchParams, router]);
+
+  useFilterQuery([
+    { key: 'status', value: filterStatus },
+    { key: 'contributors', value: filterContributors },
+    { key: 'types', value: filterTypes },
+    { key: 'month', value: filterMonth, defaultValue: currentMonth },
+    { key: 'from', value: filterDateFrom },
+    { key: 'dateTo', value: filterDateTo },
+    { key: 'cards', value: filterCreditCards },
+    { key: 'q', value: searchQuery },
+    { key: 'sort', value: sortColumn, defaultValue: 'date' },
+    { key: 'dir', value: sortDirection, defaultValue: 'desc' },
+  ], ['pay', 'to', 'amount', 'note', 'card']);
 
   async function handlePayout(e: React.FormEvent) {
     e.preventDefault();

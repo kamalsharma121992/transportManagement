@@ -10,13 +10,13 @@ import {
   paymentModeForCategory,
 } from '@/lib/expense-categories';
 import {
-  cardAssetDetails,
   fetchCreditCards,
   filterCardsByHolder,
   formatCardLabel,
   formatCardOption,
   type CreditCard,
 } from '@/lib/credit-cards';
+import { savedExpenseNeedsCapital, syncExpenseCapital, type ExpenseCapitalInput } from '@/lib/expense-capital';
 import { formatCurrency } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -40,6 +40,27 @@ const emptyForm = {
   credit_card_id: '',
   card_details: '',
 };
+
+function submitCapitalInput(
+  form: typeof emptyForm,
+  card: CreditCard | undefined,
+  cardId: number | null,
+): ExpenseCapitalInput {
+  const namedPartner = (JM_PARTNERS as readonly string[]).includes(form.payment_source);
+  return {
+    date: form.date,
+    amount: Number(form.amount),
+    category: form.category,
+    description: form.description || null,
+    paymentSource: form.payment_source,
+    paidByPerson: form.paid_by_person || null,
+    paymentMode: form.payment_mode,
+    cardId,
+    card,
+    cardDetails: form.card_details,
+    cardHolder: namedPartner ? form.payment_source : form.paid_by_person,
+  };
+}
 
 export default function SubmitExpensePage() {
   const [form, setForm] = useState(emptyForm);
@@ -122,6 +143,7 @@ export default function SubmitExpensePage() {
       return;
     }
 
+    const useCard = Boolean(cardId && !cardsTableMissing && form.payment_source !== 'Revenue' && form.payment_mode === 'Credit Card');
     const payload = {
       date: form.date,
       expense_type: form.expense_type,
@@ -134,7 +156,7 @@ export default function SubmitExpensePage() {
       paid_by: form.paid_by,
       payment_source: form.payment_source,
       status: 'Paid',
-      ...(cardId && !cardsTableMissing ? { card_id: cardId } : {}),
+      card_id: useCard ? cardId : null,
     };
 
     const { data: inserted, error } = await supabase.from('expenses').insert(payload).select('id').single();
@@ -145,20 +167,17 @@ export default function SubmitExpensePage() {
       return;
     }
 
-    // If paid by a partner, also create a capital contribution
-    if (form.payment_source === 'Partner' && form.paid_by_person) {
-      const { error: ccErr } = await supabase.from('capital_contributions').insert({
-        date: form.date,
-        contributor: form.paid_by_person,
-        contribution_type: form.payment_mode,
-        value: Number(form.amount),
-        description: form.description || form.category,
-        asset_details: cardAssetDetails(selectedCard, form.card_details),
-        ...(cardId && !cardsTableMissing ? { card_id: cardId } : {}),
-        status: 'Unpaid',
-        paid_by: 'JM transport',
-      });
-      if (ccErr) toast.error('Expense saved but capital entry failed: ' + ccErr.message);
+    if (inserted?.id) {
+      try {
+        const capitalResult = await syncExpenseCapital(inserted.id, submitCapitalInput(form, selectedCard, useCard ? cardId : null));
+        if (capitalResult === 'missing-column') {
+          toast.error('Expense saved. Run supabase/capital_source_expense.sql in Supabase so Capital stays linked.');
+        } else if (capitalResult === 'created') {
+          toast.success('Expense added + capital contribution recorded');
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Expense saved but capital entry failed');
+      }
     }
 
     setSubmitting(false);
@@ -178,6 +197,8 @@ export default function SubmitExpensePage() {
     if (!submittedId) return;
     setSubmitting(true);
 
+    const cardId = form.credit_card_id ? Number(form.credit_card_id) : null;
+    const useCard = Boolean(cardId && !cardsTableMissing && form.payment_source !== 'Revenue' && form.payment_mode === 'Credit Card');
     const payload = {
       date: form.date,
       expense_type: form.expense_type,
@@ -190,20 +211,46 @@ export default function SubmitExpensePage() {
       paid_by: form.paid_by,
       payment_source: form.payment_source,
       status: 'Paid',
-      ...(form.credit_card_id && !cardsTableMissing ? { card_id: Number(form.credit_card_id) } : {}),
+      card_id: useCard ? cardId : null,
     };
 
     const { error } = await supabase.from('expenses').update(payload).eq('id', submittedId);
-    setSubmitting(false);
 
     if (error) {
+      setSubmitting(false);
       toast.error(error.message);
       return;
     }
 
+    try {
+      const capitalResult = await syncExpenseCapital(
+        submittedId,
+        submitCapitalInput(form, creditCards.find((card) => card.id === cardId), useCard ? cardId : null),
+        {
+          createIfMissing: !savedExpenseNeedsCapital({
+            category: submittedForm.category,
+            payment_source: submittedForm.payment_source,
+            paid_by_person: submittedForm.paid_by_person || null,
+            card_id: submittedForm.credit_card_id ? Number(submittedForm.credit_card_id) : null,
+          }),
+        },
+      );
+      if (capitalResult === 'missing-column') {
+        toast.error('Expense saved. Run supabase/capital_source_expense.sql in Supabase so Capital stays linked.');
+      } else if (capitalResult === 'settled') {
+        toast.success('Response updated. This charge was already paid in Capital, so that row was left as it is.');
+      } else if (capitalResult === 'removed') {
+        toast.success('Response updated. The unpaid capital charge was removed.');
+      } else {
+        toast.success('Response updated');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Expense saved but capital entry failed');
+    }
+
+    setSubmitting(false);
     setSubmittedForm({ ...form });
     setSubmitted(true);
-    toast.success('Response updated');
   }
 
   function handleSubmitAnother() {

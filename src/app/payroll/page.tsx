@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { readMonthParam, useFilterQuery } from '@/hooks/use-filter-query';
 import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
 import {
   computeIfLeavesTodayPay,
@@ -70,11 +72,17 @@ function getPayStatus(row: DisplayRow): { label: string; className: string } {
 }
 
 export default function PayrollPage() {
+  const searchParams = useSearchParams();
   const today = new Date().toISOString().split('T')[0];
   const currentMonth = today.slice(0, 7);
 
-  const [tab, setTab] = useState<Tab>('active');
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [tab, setTab] = useState<Tab>(() => searchParams.get('tab') === 'inactive' ? 'inactive' : 'active');
+  const [selectedMonth, setSelectedMonth] = useState(() => readMonthParam(searchParams, currentMonth));
+
+  useFilterQuery([
+    { key: 'tab', value: tab, defaultValue: 'active' },
+    { key: 'month', value: selectedMonth, defaultValue: currentMonth },
+  ]);
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<MonthlyPayrollRow[]>([]);
   const [inactiveRows, setInactiveRows] = useState<MonthlyPayrollRow[]>([]);

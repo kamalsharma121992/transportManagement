@@ -1,5 +1,4 @@
 import { formatCurrency } from '@/lib/format';
-import { EXPENSE_ADVANCE_CATEGORY } from '@/lib/supabase';
 
 export type CreditCard = {
   id: number;
@@ -17,7 +16,7 @@ export type CardNetwork = 'VISA' | 'Mastercard' | 'RuPay';
 
 export const CARD_NETWORKS: CardNetwork[] = ['VISA', 'Mastercard', 'RuPay'];
 
-/** Show a notice when the bill generates within this many days. */
+/** Show a notice when the payment is due within this many days. */
 export const CARD_BILL_NOTICE_DAYS = 2;
 
 const CARD_SELECT =
@@ -77,10 +76,10 @@ export function billLeft(notice: { amount: number; paid?: number }): number {
 
 export function cardBillNotices(cards: CreditCard[], today = new Date()): CardBillNotice[] {
   return cards
-    .filter((card) => card.is_active && card.bill_generate_day != null)
+    .filter((card) => card.is_active && card.bill_pay_day != null)
     .map((card) => ({
       card,
-      daysUntil: daysUntilDayOfMonth(card.bill_generate_day as number, today),
+      daysUntil: daysUntilDayOfMonth(card.bill_pay_day as number, today),
       amount: 0,
       paid: 0,
     }))
@@ -102,53 +101,38 @@ export function upcomingStatementDate(day: number, today = new Date()): Date {
   return start;
 }
 
-/** Charges after the previous statement date, through this statement date. */
-export function billCycle(generateDay: number, today = new Date()): { from: string; to: string } {
-  const statement = upcomingStatementDate(generateDay, today);
-  const prevMonth = new Date(statement.getFullYear(), statement.getMonth() - 1, 1);
-  const prev = new Date(
-    prevMonth.getFullYear(),
-    prevMonth.getMonth(),
-    clampDay(prevMonth.getFullYear(), prevMonth.getMonth(), generateDay),
-  );
+function dateOnDay(year: number, monthIndex: number, day: number): Date {
+  return new Date(year, monthIndex, clampDay(year, monthIndex, day));
+}
+
+/**
+ * Statement this payment belongs to: the generate date on or before the next pay date.
+ * Generate on the 23rd, pay on the 29th → the 23 Oct bill is due 29 Oct.
+ */
+export function statementForPayment(generateDay: number, payDay: number, today = new Date()): Date {
+  const due = upcomingStatementDate(payDay, today);
+  const sameMonth = dateOnDay(due.getFullYear(), due.getMonth(), generateDay);
+  if (sameMonth <= due) return sameMonth;
+  return dateOnDay(due.getFullYear(), due.getMonth() - 1, generateDay);
+}
+
+/**
+ * Charges from the day after the previous statement through this statement date.
+ * Generated on the 23rd: 24 Sep through 23 Oct. A charge on 24 Oct is on the next bill.
+ * When a pay day is set, this is the bill due on the next pay date.
+ */
+export function billCycle(generateDay: number, payDay?: number | null, today = new Date()): { from: string; to: string } {
+  const statement = payDay != null
+    ? statementForPayment(generateDay, payDay, today)
+    : upcomingStatementDate(generateDay, today);
+  const prev = dateOnDay(statement.getFullYear(), statement.getMonth() - 1, generateDay);
   const from = new Date(prev);
   from.setDate(from.getDate() + 1);
   return { from: isoDate(from), to: isoDate(statement) };
 }
 
 export async function withGeneratedAmounts(notices: CardBillNotice[]): Promise<CardBillNotice[]> {
-  if (notices.length === 0) return [];
-  const cycles = notices.map((notice) => ({
-    id: notice.card.id,
-    ...billCycle(notice.card.bill_generate_day as number),
-  }));
-  const from = cycles.reduce((min, cycle) => (cycle.from < min ? cycle.from : min), cycles[0].from);
-  const to = cycles.reduce((max, cycle) => (cycle.to > max ? cycle.to : max), cycles[0].to);
-
-  const { getSupabase } = await import('@/lib/supabase');
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('expenses')
-    .select('card_id, amount, date, category')
-    .in('card_id', cycles.map((cycle) => cycle.id))
-    .gte('date', from)
-    .lte('date', to);
-
-  if (error) return notices;
-
-  return notices.map((notice) => {
-    const cycle = cycles.find((item) => item.id === notice.card.id);
-    if (!cycle) return notice;
-    const amount = (data || [])
-      .filter((row) =>
-        row.card_id === notice.card.id
-        && row.date >= cycle.from
-        && row.date <= cycle.to
-        && row.category !== EXPENSE_ADVANCE_CATEGORY,
-      )
-      .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
-    return { ...notice, amount, paid: notice.paid || 0 };
-  });
+  return withCardSettlement(notices);
 }
 
 type CycleCapitalRow = {
@@ -177,11 +161,12 @@ export async function withCardSettlement(notices: CardBillNotice[]): Promise<Car
 
   const rows = (data || []) as CycleCapitalRow[];
   return notices.map((notice) => {
-    if (!notice.card.bill_generate_day) return { ...notice, paid: 0 };
-    const cycle = billCycle(notice.card.bill_generate_day);
+    if (!notice.card.bill_generate_day) return { ...notice, amount: 0, paid: 0 };
+    const cycle = billCycle(notice.card.bill_generate_day, notice.card.bill_pay_day);
     const mine = rows.filter((row) => row.card_id === notice.card.id);
-    const movedIn = mine
-      .filter((row) => row.contribution_type === CARD_PAYMENT_TYPE && inCycle(row.date, cycle))
+    const charges = mine.filter((row) => row.contribution_type !== 'Payout');
+    const cycleCharges = charges
+      .filter((row) => inCycle(row.date, cycle))
       .reduce((sum, row) => sum + (Number(row.value) || 0), 0);
     const paid = mine
       .filter((row) => row.status === 'Paid' && row.contribution_type !== CARD_PAYMENT_TYPE && inCycle(row.contribution_type === 'Payout' ? (row.paid_date || row.date) : row.date, cycle))
@@ -191,14 +176,14 @@ export async function withCardSettlement(notices: CardBillNotice[]): Promise<Car
       .reduce((sum, row) => sum + (Number(row.value) || 0), 0);
     return {
       ...notice,
-      amount: Math.round((notice.amount + movedIn) * 100) / 100,
+      amount: Math.round(cycleCharges * 100) / 100,
       paid: Math.round((paid + movedPaid) * 100) / 100,
     };
   });
 }
 
 export async function enrichBillNotices(notices: CardBillNotice[]): Promise<CardBillNotice[]> {
-  return withCardSettlement(await withGeneratedAmounts(notices));
+  return withCardSettlement(notices);
 }
 
 export async function settleCardCapital(params: {
@@ -212,22 +197,37 @@ export async function settleCardCapital(params: {
 }): Promise<void> {
   const { getSupabase } = await import('@/lib/supabase');
   const supabase = getSupabase();
-  const { data: rows, error } = await supabase
+  const capitalSelect = 'id, date, contributor, contribution_type, value, description, asset_details, card_id, source_expense_id';
+  let { data: rows, error } = await supabase
     .from('capital_contributions')
-    .select('id, date, contributor, contribution_type, value, description, asset_details, card_id')
+    .select(capitalSelect)
     .eq('card_id', params.cardId)
     .neq('status', 'Paid')
     .neq('contribution_type', 'Payout')
     .order('date', { ascending: true })
     .order('id', { ascending: true });
+  if (error && /source_expense_id|schema cache/i.test(error.message)) {
+    const fallback = await supabase
+      .from('capital_contributions')
+      .select('id, date, contributor, contribution_type, value, description, asset_details, card_id')
+      .eq('card_id', params.cardId)
+      .neq('status', 'Paid')
+      .neq('contribution_type', 'Payout')
+      .order('date', { ascending: true })
+      .order('id', { ascending: true });
+    rows = (fallback.data || []).map((row) => ({ ...row, source_expense_id: null }));
+    error = fallback.error;
+  }
   if (error) throw new Error(error.message);
 
   const { data: billCard } = await supabase
     .from('credit_cards')
-    .select('bill_generate_day')
+    .select('bill_generate_day, bill_pay_day')
     .eq('id', params.cardId)
     .maybeSingle();
-  const cycle = billCard?.bill_generate_day ? billCycle(billCard.bill_generate_day) : null;
+  const cycle = billCard?.bill_generate_day
+    ? billCycle(billCard.bill_generate_day, billCard.bill_pay_day)
+    : null;
   const ordered = [...(rows || [])].sort((a, b) => {
     const aIn = cycle && a.date >= cycle.from && a.date <= cycle.to ? 0 : 1;
     const bIn = cycle && b.date >= cycle.from && b.date <= cycle.to ? 0 : 1;
@@ -265,6 +265,9 @@ export async function settleCardCapital(params: {
         description: row.description,
         asset_details: row.asset_details,
         card_id: row.card_id,
+        ...('source_expense_id' in row && row.source_expense_id
+          ? { source_expense_id: row.source_expense_id }
+          : {}),
         status: 'Unpaid',
         paid_date: null,
         paid_by: 'JM transport',
@@ -332,7 +335,7 @@ export async function fetchCardBillRows(): Promise<CardBillRow[]> {
     .filter((card) => card.bill_generate_day != null)
     .map((card) => ({
       card,
-      daysUntil: daysUntilDayOfMonth(card.bill_generate_day as number),
+      daysUntil: card.bill_pay_day != null ? daysUntilDayOfMonth(card.bill_pay_day) : 0,
       amount: 0,
       paid: 0,
     }));
@@ -342,10 +345,12 @@ export async function fetchCardBillRows(): Promise<CardBillRow[]> {
   return data
     .map((card) => {
       const notice = byId.get(card.id);
-      const daysUntil = card.bill_generate_day != null
-        ? daysUntilDayOfMonth(card.bill_generate_day)
+      const daysUntil = card.bill_pay_day != null
+        ? daysUntilDayOfMonth(card.bill_pay_day)
         : null;
-      const cycle = card.bill_generate_day != null ? billCycle(card.bill_generate_day) : null;
+      const cycle = card.bill_generate_day != null
+        ? billCycle(card.bill_generate_day, card.bill_pay_day)
+        : null;
       return {
         card,
         daysUntil,
@@ -381,11 +386,8 @@ export function billNoticeText(notice: CardBillNotice): string {
     : notice.daysUntil === 1
       ? 'tomorrow'
       : `in ${notice.daysUntil} days`;
-  const pay = notice.card.bill_pay_day
-    ? ` Pay by the ${ordinalDay(notice.card.bill_pay_day)}.`
-    : '';
   const generated = ` Generated ${formatCurrency(notice.amount)}. Paid ${formatCurrency(notice.paid || 0)}. Left ${formatCurrency(billLeft(notice))}.`;
-  return `${notice.card.label} bill generates ${when}.${generated}${pay}`;
+  return `${notice.card.label} payment is due ${when}.${generated}`;
 }
 
 export function buildCardLabel(
@@ -407,6 +409,26 @@ export function formatCardLabel(
 
 export function formatCardOption(card: CreditCard): string {
   return `${formatCardLabel(card)} (${card.holder})`;
+}
+
+/** Name shown for a card on an expense row. */
+export function expenseCreditCardName(
+  card: Pick<CreditCard, 'label' | 'bank_name' | 'network' | 'last_four'> | undefined,
+): string {
+  if (!card) return '';
+  const label = card.label?.trim();
+  return label || formatCardLabel(card);
+}
+
+/** Paid From for a credit-card expense: card name and the partner who owns it. */
+export function expensePaidFromLabel(
+  exp: { card_id: number | null; payment_source: string | null; paid_by_person: string | null },
+  card: Pick<CreditCard, 'bank_name' | 'network' | 'last_four' | 'holder'> | undefined,
+): string {
+  if (!exp.card_id) return exp.payment_source || 'Partner';
+  const name = card ? formatCardLabel(card) : 'CC';
+  const partner = card?.holder || exp.paid_by_person || '';
+  return partner ? `${name} · ${partner}` : name;
 }
 
 export function cardAssetDetails(

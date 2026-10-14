@@ -19,8 +19,8 @@ export function CreditCardBillBanner({
       <div className="min-w-0 flex-1 text-sm">
         <p className="font-semibold">
           {notices.length === 1
-            ? '1 credit card bill generates within 2 days'
-            : `${notices.length} credit card bills generate within 2 days`}
+            ? '1 credit card payment is due within 2 days'
+            : `${notices.length} credit card payments are due within 2 days`}
         </p>
         <ul className="mt-1 space-y-1 text-amber-900/90">
           {notices.map((notice) => (

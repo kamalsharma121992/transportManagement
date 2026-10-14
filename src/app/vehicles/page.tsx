@@ -16,6 +16,8 @@ import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useFilterQuery } from '@/hooks/use-filter-query';
+import { useSearchParams } from 'next/navigation';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 import { buildTextSearchFilter, VEHICLE_SEARCH_COLUMNS } from '@/lib/search';
@@ -38,8 +40,11 @@ export default function VehiclesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
-  const [searchInput, setSearchInput] = useState('');
+  const searchParams = useSearchParams();
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') || '');
   const searchQuery = useDebouncedValue(searchInput);
+
+  useFilterQuery([{ key: 'q', value: searchQuery }]);
 
   const {
     page,

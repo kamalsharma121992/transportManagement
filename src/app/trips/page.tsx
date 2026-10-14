@@ -51,6 +51,8 @@ import { getSupabaseRange } from '@/lib/pagination';
 import { buildTextSearchFilter, TRIP_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
+import { readMonthParam, readSortParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
+import { useSearchParams } from 'next/navigation';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
 import { downloadTripsCsv, printTripsPdf, tripExportSuffix, tripExportTotals, TRIP_EXPORT_SELECT, TRIP_PDF_SELECT } from '@/lib/trip-export';
@@ -113,23 +115,43 @@ export default function TripsPage() {
   const [builtyGallery, setBuiltyGallery] = useState<string[]>([]);
   const [builtyGalleryIndex, setBuiltyGalleryIndex] = useState(0);
   const [saving, setSaving] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
+  const searchParams = useSearchParams();
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const initialSort = readSortParam(searchParams, 'date', 'desc');
+  const [showFilters, setShowFilters] = useState(() => Boolean(
+    searchParams.get('from') || searchParams.get('dateTo') || searchParams.get('vehicles')
+    || searchParams.get('routes') || searchParams.get('drivers') || searchParams.get('payment')
+    || searchParams.get('q')
+    || (searchParams.has('month') && searchParams.get('month') !== currentMonth),
+  ));
   const [showSummary, setShowSummary] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
   const [selectedMap, setSelectedMap] = useState<Record<number, Trip>>({});
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const [filterMonth, setFilterMonth] = useState(currentMonth);
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const [filterVehicles, setFilterVehicles] = useState<string[]>([]);
-  const [filterRoutes, setFilterRoutes] = useState<string[]>([]);
-  const [filterDrivers, setFilterDrivers] = useState<string[]>([]);
-  const [filterPaymentStatuses, setFilterPaymentStatuses] = useState<string[]>([]);
-  const [searchInput, setSearchInput] = useState('');
+  const [filterMonth, setFilterMonth] = useState(() => readMonthParam(searchParams, currentMonth));
+  const [filterDateFrom, setFilterDateFrom] = useState(() => searchParams.get('from') || '');
+  const [filterDateTo, setFilterDateTo] = useState(() => searchParams.get('dateTo') || '');
+  const [filterVehicles, setFilterVehicles] = useState<string[]>(() => splitQueryList(searchParams.get('vehicles')));
+  const [filterRoutes, setFilterRoutes] = useState<string[]>(() => splitQueryList(searchParams.get('routes')));
+  const [filterDrivers, setFilterDrivers] = useState<string[]>(() => splitQueryList(searchParams.get('drivers')));
+  const [filterPaymentStatuses, setFilterPaymentStatuses] = useState<string[]>(() => splitQueryList(searchParams.get('payment')));
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') || '');
   const searchQuery = useDebouncedValue(searchInput);
-  const { sortColumn, sortDirection, toggleSort } = useTableSort('date', 'desc');
+  const { sortColumn, sortDirection, toggleSort } = useTableSort(initialSort.column, initialSort.dir);
+
+  useFilterQuery([
+    { key: 'month', value: filterMonth, defaultValue: currentMonth },
+    { key: 'from', value: filterDateFrom },
+    { key: 'dateTo', value: filterDateTo },
+    { key: 'vehicles', value: filterVehicles },
+    { key: 'routes', value: filterRoutes },
+    { key: 'drivers', value: filterDrivers },
+    { key: 'payment', value: filterPaymentStatuses },
+    { key: 'q', value: searchQuery },
+    { key: 'sort', value: sortColumn, defaultValue: 'date' },
+    { key: 'dir', value: sortDirection, defaultValue: 'desc' },
+  ]);
   const [summary, setSummary] = useState({ count: 0, revenue: 0, weight: 0, pendingRevenue: 0, paidRevenue: 0 });
 
   const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || filterVehicles.length > 0 || filterRoutes.length > 0 || filterDrivers.length > 0 || filterPaymentStatuses.length > 0 || !!searchQuery;

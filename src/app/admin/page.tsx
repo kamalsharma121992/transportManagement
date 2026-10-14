@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { useFilterQuery } from '@/hooks/use-filter-query';
 import { supabase, Route, Driver, Partner, JM_PARTNERS, PAID_BY_ENTITIES, EXPENSE_TYPES, type ExpenseType } from '@/lib/supabase';
 import { type ExpenseCategory } from '@/lib/expense-categories';
 import {
@@ -623,14 +625,17 @@ const emptyCreditCardForm = {
 
 // ─── Credit Cards Section ───
 function CreditCardsSection() {
+  const searchParams = useSearchParams();
   const [cards, setCards] = useState<CreditCardRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [filterHolder, setFilterHolder] = useState('');
+  const [filterHolder, setFilterHolder] = useState(() => searchParams.get('holder') || '');
   const [form, setForm] = useState(emptyCreditCardForm);
   const [tableMissing, setTableMissing] = useState(false);
   const [billNotices, setBillNotices] = useState<CardBillNotice[]>([]);
+
+  useFilterQuery([{ key: 'holder', value: filterHolder }]);
 
   async function fetchCards() {
     setLoading(true);
@@ -864,7 +869,7 @@ function CreditCardsSection() {
 
       {billNotices.length > 0 && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          <p className="font-semibold">Bill generating soon</p>
+          <p className="font-semibold">Payment due soon</p>
           <ul className="mt-1 space-y-1">
             {billNotices.map((notice) => (
               <li key={notice.card.id}>
@@ -967,12 +972,15 @@ const emptyCategoryForm = {
 
 // ─── Categories Section ───
 function CategoriesSection() {
+  const searchParams = useSearchParams();
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [filterType, setFilterType] = useState<ExpenseType | ''>('');
+  const [filterType, setFilterType] = useState<ExpenseType | ''>(() => (searchParams.get('type') || '') as ExpenseType | '');
   const [form, setForm] = useState(emptyCategoryForm);
+
+  useFilterQuery([{ key: 'type', value: filterType }]);
 
   async function fetchCategories() {
     setLoading(true);
@@ -1174,7 +1182,16 @@ function CategoriesSection() {
 
 // ─── Main Admin Page ───
 export default function AdminPage() {
-  const [tab, setTab] = useState<Tab>('routes');
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => {
+    const value = searchParams.get('tab');
+    if (value === 'drivers' || value === 'partners' || value === 'categories' || value === 'credit_cards' || value === 'routes') {
+      return value;
+    }
+    return 'routes';
+  });
+
+  useFilterQuery([{ key: 'tab', value: tab, defaultValue: 'routes' }]);
 
   const tabs: { value: Tab; label: string; icon: any }[] = [
     { value: 'routes', label: 'Routes', icon: RouteIcon },

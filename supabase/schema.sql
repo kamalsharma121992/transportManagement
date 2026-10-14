@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS capital_contributions (
   paid_by TEXT DEFAULT 'JM transport',
   payment_source TEXT,
   card_id INTEGER REFERENCES credit_cards(id),
+  source_expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -154,6 +155,7 @@ CREATE INDEX IF NOT EXISTS idx_capital_contributions_date ON capital_contributio
 CREATE INDEX IF NOT EXISTS idx_credit_cards_holder ON credit_cards(holder);
 CREATE INDEX IF NOT EXISTS idx_expenses_card ON expenses(card_id);
 CREATE INDEX IF NOT EXISTS idx_capital_contributions_card ON capital_contributions(card_id);
+CREATE INDEX IF NOT EXISTS idx_capital_contributions_source_expense ON capital_contributions(source_expense_id);
 
 -- Expense categories (managed in Admin)
 CREATE TABLE IF NOT EXISTS expense_categories (
