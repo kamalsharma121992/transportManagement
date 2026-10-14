@@ -28,8 +28,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Users, Handshake, UserX, Tags, CreditCard, Shield } from 'lucide-react';
+import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake, UserX, Tags, CreditCard, Shield } from 'lucide-react';
 import { RolesSection, UsersSection } from '@/components/admin-access';
+import { RoutesManager } from '@/components/routes-manager';
 import { useSession } from '@/components/session-provider';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
@@ -37,7 +38,7 @@ import { PageHeader } from '@/components/page-header';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 
-type Tab = 'drivers' | 'partners' | 'categories' | 'credit_cards' | 'users' | 'roles';
+type Tab = 'routes' | 'drivers' | 'partners' | 'categories' | 'credit_cards' | 'users' | 'roles';
 
 // ─── Drivers Section ───
 const emptyDriverForm = {
@@ -1029,12 +1030,11 @@ export default function AdminPage() {
 
   useEffect(() => {
     const value = searchParams.get('tab');
-    if (value === 'routes') router.replace('/trips?tab=routes');
     if (value === 'audit') router.replace('/audit');
   }, [router, searchParams]);
   const [tab, setTab] = useState<Tab>(() => {
     const value = searchParams.get('tab');
-    if (value === 'drivers' || value === 'partners' || value === 'categories' || value === 'credit_cards' || value === 'users' || value === 'roles') {
+    if (value === 'routes' || value === 'drivers' || value === 'partners' || value === 'categories' || value === 'credit_cards' || value === 'users' || value === 'roles') {
       return value;
     }
     return 'drivers';
@@ -1043,6 +1043,7 @@ export default function AdminPage() {
   useFilterQuery([{ key: 'tab', value: tab, defaultValue: 'drivers' }]);
 
   const tabs: { value: Tab; label: string; icon: any }[] = [
+    { value: 'routes', label: 'Routes', icon: RouteIcon },
     { value: 'drivers', label: 'Drivers', icon: Users },
     { value: 'partners', label: 'Partners', icon: Handshake },
     { value: 'categories', label: 'Categories', icon: Tags },
@@ -1074,6 +1075,7 @@ export default function AdminPage() {
         ))}
       </div>
 
+      {tab === 'routes' && <RoutesManager />}
       {tab === 'drivers' && <DriversSection />}
       {tab === 'partners' && <PartnersSection />}
       {tab === 'categories' && <CategoriesSection />}

@@ -38,7 +38,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Download, ImageIcon, Route as RouteIcon, Map } from 'lucide-react';
+import { Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Download, ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -52,7 +52,7 @@ import { buildTextSearchFilter, TRIP_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { readMonthParam, readSortParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { cn } from '@/lib/utils';
 import { downloadTripsCsv, printTripsPdf, tripExportSuffix, tripExportTotals, TRIP_EXPORT_SELECT, TRIP_PDF_SELECT } from '@/lib/trip-export';
@@ -60,8 +60,6 @@ import { removeTripBuiltyMany, uploadTripBuiltyMany, validateBuiltyFile } from '
 import { MAX_ENTITY_IMAGES, normalizeImageUrls } from '@/lib/image-urls';
 import { MultiImageField } from '@/components/multi-image-field';
 import { useSession, useSessionReady } from '@/components/session-provider';
-import { sessionCanOpen } from '@/lib/auth/pages';
-import { RoutesManager } from '@/components/routes-manager';
 
 const emptyTrip: TripFormData = {
   date: new Date().toISOString().split('T')[0],
@@ -99,7 +97,6 @@ export default function TripsPage() {
   const session = useSession();
   const sessionReady = useSessionReady();
   const lockedDriver = session?.role === 'Driver' ? session.driverName : null;
-  const canManageRoutes = !!session && sessionCanOpen(session.pages, 'routes');
   const [trips, setTrips] = useState<Trip[]>([]);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [drivers, setDrivers] = useState<string[]>([]);
@@ -122,9 +119,8 @@ export default function TripsPage() {
   const [builtyGallery, setBuiltyGallery] = useState<string[]>([]);
   const [builtyGalleryIndex, setBuiltyGalleryIndex] = useState(0);
   const [saving, setSaving] = useState(false);
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const [tripTab, setTripTab] = useState<'trips' | 'routes'>(() => searchParams.get('tab') === 'routes' ? 'routes' : 'trips');
-  const showRoutes = sessionReady && canManageRoutes && tripTab === 'routes';
   const currentMonth = new Date().toISOString().slice(0, 7);
   const initialSort = readSortParam(searchParams, 'date', 'desc');
   const [showFilters, setShowFilters] = useState(() => Boolean(
@@ -160,7 +156,6 @@ export default function TripsPage() {
     { key: 'q', value: searchQuery },
     { key: 'sort', value: sortColumn, defaultValue: 'date' },
     { key: 'dir', value: sortDirection, defaultValue: 'desc' },
-    { key: 'tab', value: showRoutes ? 'routes' : 'trips', defaultValue: 'trips' },
   ]);
   const [summary, setSummary] = useState({ count: 0, revenue: 0, weight: 0, pendingRevenue: 0, paidRevenue: 0 });
 
@@ -877,46 +872,12 @@ export default function TripsPage() {
     );
   }
 
-  const sectionTabs = canManageRoutes ? (
-    <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
-      <button
-        type="button"
-        onClick={() => setTripTab('trips')}
-        className={cn(
-          'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-          !showRoutes ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700',
-        )}
-      >
-        <RouteIcon className="h-4 w-4" />
-        Trips
-      </button>
-      <button
-        type="button"
-        onClick={() => setTripTab('routes')}
-        className={cn(
-          'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-          showRoutes ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700',
-        )}
-      >
-        <Map className="h-4 w-4" />
-        Routes
-      </button>
-    </div>
-  ) : null;
-
-  if (showRoutes) {
-    return (
-      <div className="space-y-6">
-        <PageHeader title="Trip Log" />
-        {sectionTabs}
-        <RoutesManager />
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (searchParams.get('tab') === 'routes') router.replace('/admin?tab=routes');
+  }, [router, searchParams]);
 
   return (
     <div className="space-y-6">
-      {sectionTabs}
       <PageHeader
         title="Trip Log"
         search={{
