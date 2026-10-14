@@ -7,6 +7,9 @@ import { AuthGate } from '@/components/auth-gate';
 import { ExpenseAdvanceOverdueNotifier } from '@/components/expense-advance-overdue-notifier';
 import { ExpenseAdvanceOverdueBanner } from '@/components/expense-advance-overdue-banner';
 import { TripPaymentOverdueNotifier } from '@/components/trip-payment-overdue-notifier';
+import { CreditCardBillNotifier } from '@/components/credit-card-bill-notifier';
+import { CreditCardBillBanner } from '@/components/credit-card-bill-banner';
+import type { CardBillNotice } from '@/lib/credit-cards';
 
 const PUBLIC_ROUTES = ['/submit'];
 
@@ -16,13 +19,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [overdueCount, setOverdueCount] = useState(0);
   const [warningCount, setWarningCount] = useState(0);
   const [tripOverdueCount, setTripOverdueCount] = useState(0);
+  const [cardBillNotices, setCardBillNotices] = useState<CardBillNotice[]>([]);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [cardBannerDismissed, setCardBannerDismissed] = useState(false);
   const onAlerts = useCallback((counts: { overdue: number; warning: number }) => {
     setOverdueCount(counts.overdue);
     setWarningCount(counts.warning);
   }, []);
   const onTripOverdue = useCallback((count: number) => {
     setTripOverdueCount(count);
+  }, []);
+  const onCardBills = useCallback((notices: CardBillNotice[]) => {
+    setCardBillNotices(notices);
   }, []);
 
   if (isPublic) {
@@ -33,16 +41,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <AuthGate>
       <ExpenseAdvanceOverdueNotifier onAlerts={onAlerts} />
       <TripPaymentOverdueNotifier onOverdue={onTripOverdue} />
+      <CreditCardBillNotifier onNotices={onCardBills} />
       <Sidebar
         overdueCount={overdueCount}
         warningCount={warningCount}
         tripOverdueCount={tripOverdueCount}
+        cardBillCount={cardBillNotices.length}
       />
       <main className="md:ml-64 min-h-full p-4 md:p-8 pt-16 md:pt-8">
         {!bannerDismissed && (
           <ExpenseAdvanceOverdueBanner
             overdueCount={overdueCount}
             onDismiss={() => setBannerDismissed(true)}
+          />
+        )}
+        {!cardBannerDismissed && (
+          <CreditCardBillBanner
+            notices={cardBillNotices}
+            onDismiss={() => setCardBannerDismissed(true)}
           />
         )}
         {children}

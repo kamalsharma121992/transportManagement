@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase, CapitalContribution, JM_PARTNERS, PAYMENT_SOURCES } from '@/lib/supabase';
 import {
   cardAssetDetails,
@@ -8,6 +9,7 @@ import {
   filterCardsByHolder,
   formatCardLabel,
   formatCardOption,
+  settleCardCapital,
   type CreditCard,
 } from '@/lib/credit-cards';
 import { formatCurrency, formatDate, getMonthFilterOptions, getMonthDateRange, FILTER_SELECT_CLASS } from '@/lib/format';
@@ -21,7 +23,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Pencil, Trash2, CheckCircle2, Clock, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, CheckCircle2, Clock, ChevronDown, ChevronUp, X, Banknote } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -35,6 +37,8 @@ import { buildTextSearchFilter, CAPITAL_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { SortableTableHead } from '@/components/sortable-table-head';
+
+const CAPITAL_TYPES = ['Credit Card', 'Cash', 'Bank Transfer', 'Payout', 'Card Payment'] as const;
 
 const emptyForm = {
   date: new Date().toISOString().split('T')[0],
@@ -50,11 +54,24 @@ const emptyForm = {
 };
 
 export default function CapitalPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [contributions, setContributions] = useState<CapitalContribution[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [payDialogOpen, setPayDialogOpen] = useState(false);
+  const [payoutDialogOpen, setPayoutDialogOpen] = useState(false);
+  const [payoutSaving, setPayoutSaving] = useState(false);
+  const [payoutForm, setPayoutForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    contributor: '',
+    value: 0,
+    payment_source: 'Revenue',
+    description: '',
+    card_id: '',
+    payer_card_id: '',
+  });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [payingIds, setPayingIds] = useState<number[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -64,6 +81,7 @@ export default function CapitalPage() {
   const [payForm, setPayForm] = useState({ paid_date: new Date().toISOString().split('T')[0], paid_by: 'JM transport', payment_source: 'Revenue' });
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterContributors, setFilterContributors] = useState<string[]>([]);
+  const [filterTypes, setFilterTypes] = useState<string[]>([]);
   const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
@@ -88,7 +106,7 @@ export default function CapitalPage() {
     setTotalItems: setTotalContributionsCount,
     totalPages,
   } = useServerPagination([
-    filterStatus, filterContributors, filterMonth, filterDateFrom, filterDateTo,
+    filterStatus, filterContributors, filterTypes, filterMonth, filterDateFrom, filterDateTo,
     filterCreditCards, searchQuery, sortColumn, sortDirection,
   ]);
 
@@ -101,6 +119,7 @@ export default function CapitalPage() {
     };
     if (filterStatus) q = q.eq('status', filterStatus);
     q = applyInFilter(q, 'contributor', filterContributors);
+    q = applyInFilter(q, 'contribution_type', filterTypes);
     q = applyInNumberFilter(q, 'card_id', filterCreditCards);
     if (filterMonth) {
       const { from, to } = getMonthDateRange(filterMonth);
@@ -128,7 +147,7 @@ export default function CapitalPage() {
     const { data, count, error } = await listQuery.range(from, to);
 
     const summaryQuery = applyCapitalFilters(
-      supabase.from('capital_contributions').select('value, status, contributor'),
+      supabase.from('capital_contributions').select('value, status, contributor, contribution_type'),
     );
     const { data: summaryRows, error: summaryError } = await summaryQuery;
 
@@ -139,7 +158,8 @@ export default function CapitalPage() {
     (summaryRows || []).forEach((c) => {
       if (!contributorTotals[c.contributor]) contributorTotals[c.contributor] = { total: 0, paid: 0, unpaid: 0 };
       const amt = Number(c.value);
-      contributorTotals[c.contributor].total += amt;
+      const isPayout = c.contribution_type === 'Payout';
+      if (!isPayout) contributorTotals[c.contributor].total += amt;
       if (c.status === 'Paid') contributorTotals[c.contributor].paid += amt;
       else contributorTotals[c.contributor].unpaid += amt;
     });
@@ -147,7 +167,7 @@ export default function CapitalPage() {
     setContributions(data || []);
     setTotalContributionsCount(count ?? 0);
     setSummary({
-      total: (summaryRows || []).reduce((sum, c) => sum + Number(c.value), 0),
+      total: (summaryRows || []).filter((c) => c.contribution_type !== 'Payout').reduce((sum, c) => sum + Number(c.value), 0),
       paidTotal: (summaryRows || []).filter((c) => c.status === 'Paid').reduce((sum, c) => sum + Number(c.value), 0),
       unpaidTotal: (summaryRows || []).filter((c) => c.status !== 'Paid').reduce((sum, c) => sum + Number(c.value), 0),
       contributorTotals,
@@ -156,14 +176,14 @@ export default function CapitalPage() {
   }
 
   useEffect(() => { fetchData(); }, [
-    page, pageSize, filterStatus, filterContributors, filterMonth, filterDateFrom,
+    page, pageSize, filterStatus, filterContributors, filterTypes, filterMonth, filterDateFrom,
     filterDateTo, filterCreditCards, searchQuery, sortColumn, sortDirection,
   ]);
 
   useEffect(() => {
     setSelectedIds([]);
   }, [
-    page, pageSize, filterStatus, filterContributors, filterMonth, filterDateFrom,
+    page, pageSize, filterStatus, filterContributors, filterTypes, filterMonth, filterDateFrom,
     filterDateTo, filterCreditCards, searchQuery, sortColumn, sortDirection,
   ]);
 
@@ -244,6 +264,82 @@ export default function CapitalPage() {
       paid_by: c.paid_by || 'JM transport',
     });
     setDialogOpen(true);
+  }
+
+  function openPayoutDialog() {
+    setPayoutForm({
+      date: new Date().toISOString().split('T')[0],
+      contributor: '',
+      value: 0,
+      payment_source: 'Revenue',
+      description: '',
+      card_id: '',
+      payer_card_id: '',
+    });
+    setPayoutDialogOpen(true);
+  }
+
+  useEffect(() => {
+    if (searchParams.get('pay') !== '1') return;
+    const amount = Number(searchParams.get('amount') || 0);
+    setPayoutForm({
+      date: new Date().toISOString().split('T')[0],
+      contributor: searchParams.get('to') || '',
+      value: Number.isFinite(amount) ? amount : 0,
+      payment_source: 'Revenue',
+      description: searchParams.get('note') || '',
+      card_id: searchParams.get('card') || '',
+      payer_card_id: '',
+    });
+    setPayoutDialogOpen(true);
+    router.replace('/capital', { scroll: false });
+  }, [searchParams, router]);
+
+  async function handlePayout(e: React.FormEvent) {
+    e.preventDefault();
+    if (!payoutForm.contributor) {
+      toast.error('Select who you are paying');
+      return;
+    }
+    if (!payoutForm.value || payoutForm.value <= 0) {
+      toast.error('Enter an amount');
+      return;
+    }
+    setPayoutSaving(true);
+    try {
+      if (payoutForm.card_id) {
+        await settleCardCapital({
+          cardId: Number(payoutForm.card_id),
+          amount: payoutForm.value,
+          date: payoutForm.date,
+          contributor: payoutForm.contributor,
+          paymentSource: payoutForm.payment_source,
+          description: payoutForm.description.trim() || `${payoutForm.contributor} card bill`,
+          payerCardId: payoutForm.payer_card_id ? Number(payoutForm.payer_card_id) : null,
+        });
+      } else {
+        const { error } = await supabase.from('capital_contributions').insert({
+          date: payoutForm.date,
+          contributor: payoutForm.contributor,
+          contribution_type: 'Payout',
+          value: payoutForm.value,
+          description: payoutForm.description.trim() || 'Paid back',
+          asset_details: null,
+          status: 'Paid',
+          paid_date: payoutForm.date,
+          paid_by: 'JM transport',
+          payment_source: payoutForm.payment_source,
+        });
+        if (error) throw new Error(error.message);
+      }
+      toast.success(`Paid ${payoutForm.contributor}`);
+      setPayoutDialogOpen(false);
+      fetchData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save payment');
+    } finally {
+      setPayoutSaving(false);
+    }
   }
 
   function startPay(c: CapitalContribution) {
@@ -345,6 +441,7 @@ export default function CapitalPage() {
     !!filterDateTo ||
     !!filterStatus ||
     !!filterContributors.length ||
+    !!filterTypes.length ||
     !!filterCreditCards.length ||
     !!searchQuery;
 
@@ -354,6 +451,7 @@ export default function CapitalPage() {
     setFilterDateTo('');
     setFilterStatus('');
     setFilterContributors([]);
+    setFilterTypes([]);
     setFilterCreditCards([]);
     setSearchInput('');
   }
@@ -370,6 +468,10 @@ export default function CapitalPage() {
   if (filterStatus) activeFilterLabels.push('Status: ' + filterStatus);
   if (filterContributors.length > 0) {
     const label = formatMultiFilterLabel('Contributor', filterContributors);
+    if (label) activeFilterLabels.push(label);
+  }
+  if (filterTypes.length > 0) {
+    const label = formatMultiFilterLabel('Type', filterTypes);
     if (label) activeFilterLabels.push(label);
   }
   if (filterCreditCards.length > 0) {
@@ -394,9 +496,14 @@ export default function CapitalPage() {
         onClearFilters={clearFilters}
         clearFiltersLabel="Reset filters"
         primaryAction={
-          <Button onClick={() => { setEditingId(null); setForm(emptyForm); setDialogOpen(true); }}>
-            <Plus className="h-4 w-4 mr-2" /> Add Contribution
-          </Button>
+          <>
+            <Button className="bg-green-600 hover:bg-green-700" onClick={openPayoutDialog}>
+              <Banknote className="h-4 w-4 mr-2" /> Pay
+            </Button>
+            <Button onClick={() => { setEditingId(null); setForm(emptyForm); setDialogOpen(true); }}>
+              <Plus className="h-4 w-4 mr-2" /> Add Contribution
+            </Button>
+          </>
         }
       />
 
@@ -470,6 +577,92 @@ export default function CapitalPage() {
                 )}
               </div>
               <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Contribution</Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={payoutDialogOpen} onOpenChange={setPayoutDialogOpen}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Pay partner</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handlePayout} className="space-y-4">
+              <div>
+                <Label>Paying to</Label>
+                <select
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={payoutForm.contributor}
+                  onChange={(e) => setPayoutForm({ ...payoutForm, contributor: e.target.value })}
+                  required
+                >
+                  <option value="">Select</option>
+                  {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
+                <Label>Amount ({'\u20B9'})</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={payoutForm.value || ''}
+                  onChange={(e) => setPayoutForm({ ...payoutForm, value: Number(e.target.value) })}
+                  required
+                />
+                {payoutForm.card_id && (
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Left on this bill. Credit card rows are marked paid up to this amount. A row that does not match is split.
+                  </p>
+                )}
+              </div>
+              <div>
+                <Label>Paid from</Label>
+                <select
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={payoutForm.payment_source}
+                  onChange={(e) => setPayoutForm({ ...payoutForm, payment_source: e.target.value, payer_card_id: '' })}
+                >
+                  {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              {payoutForm.card_id && (JM_PARTNERS as readonly string[]).includes(payoutForm.payment_source) && (
+                <div>
+                  <Label>Their card</Label>
+                  <select
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={payoutForm.payer_card_id}
+                    onChange={(e) => setPayoutForm({ ...payoutForm, payer_card_id: e.target.value })}
+                  >
+                    <option value="">Cash, not a card</option>
+                    {filterCardsByHolder(creditCards, payoutForm.payment_source).map((card) => (
+                      <option key={card.id} value={card.id}>{formatCardOption(card)}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    If they pay with their card, this amount is added as unpaid on that card.
+                  </p>
+                </div>
+              )}
+              <div>
+                <Label>Date</Label>
+                <Input
+                  type="date"
+                  value={payoutForm.date}
+                  onChange={(e) => setPayoutForm({ ...payoutForm, date: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <Label>Note</Label>
+                <Input
+                  value={payoutForm.description}
+                  onChange={(e) => setPayoutForm({ ...payoutForm, description: e.target.value })}
+                  placeholder="e.g. Bank EMI"
+                />
+              </div>
+              <Button type="submit" className="w-full bg-green-600 hover:bg-green-700" disabled={payoutSaving}>
+                {payoutSaving ? 'Saving...' : 'Confirm Payment'}
+              </Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -610,6 +803,14 @@ export default function CapitalPage() {
                   onChange={setFilterContributors}
                   placeholder="All"
                   searchPlaceholder="Search contributor..."
+                />
+                <MultiSelectFilter
+                  label="Type"
+                  options={CAPITAL_TYPES}
+                  selected={filterTypes}
+                  onChange={setFilterTypes}
+                  placeholder="All types"
+                  searchPlaceholder="Search type..."
                 />
                 <MultiSelectFilter
                   label="Credit Card"

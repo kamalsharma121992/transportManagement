@@ -462,6 +462,41 @@ async function fetchDailyTripFallback(filters: ReportFilterParams): Promise<Dail
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+export type CapitalPaidRow = {
+  id: number;
+  date: string;
+  contributor: string;
+  value: number;
+  payment_source: string | null;
+  description: string | null;
+  contribution_type: string;
+};
+
+export async function fetchCapitalPaidBack(filters: ReportFilterParams): Promise<CapitalPaidRow[]> {
+  let query = supabase
+    .from('capital_contributions')
+    .select('id, paid_date, date, contributor, value, payment_source, description, contribution_type, paid_by')
+    .eq('status', 'Paid')
+    .or('contribution_type.eq.Payout,card_id.not.is.null');
+
+  if (filters.dateFrom) query = query.gte('paid_date', filters.dateFrom);
+  if (filters.dateTo) query = query.lte('paid_date', filters.dateTo);
+  query = applyInFilter(query, 'paid_by', filters.entities);
+
+  const { data, error } = await query.order('paid_date', { ascending: false });
+  if (error) throw new Error(error.message);
+
+  return (data || []).map((row) => ({
+    id: row.id,
+    date: row.paid_date || row.date,
+    contributor: row.contributor,
+    value: num(row.value),
+    payment_source: row.payment_source,
+    description: row.description,
+    contribution_type: row.contribution_type,
+  }));
+}
+
 export function downloadCsv(filename: string, rows: string[][]): void {
   const escape = (cell: string) => {
     if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {

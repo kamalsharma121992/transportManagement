@@ -1,11 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { supabase, Route, Driver, Partner, JM_PARTNERS, PAID_BY_ENTITIES, EXPENSE_TYPES, type ExpenseType } from '@/lib/supabase';
 import { type ExpenseCategory } from '@/lib/expense-categories';
 import {
   CARD_NETWORKS,
+  billNoticeText,
+  capitalPayHref,
+  cardBillNotices,
   buildCardLabel,
+  ordinalDay,
+  enrichBillNotices,
+  type CardBillNotice,
   type CreditCard as CreditCardRow,
 } from '@/lib/credit-cards';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -610,6 +617,8 @@ const emptyCreditCardForm = {
   last_four: '',
   label: '',
   is_active: true,
+  bill_generate_day: '',
+  bill_pay_day: '',
 };
 
 // ─── Credit Cards Section ───
@@ -621,18 +630,38 @@ function CreditCardsSection() {
   const [filterHolder, setFilterHolder] = useState('');
   const [form, setForm] = useState(emptyCreditCardForm);
   const [tableMissing, setTableMissing] = useState(false);
+  const [billNotices, setBillNotices] = useState<CardBillNotice[]>([]);
 
   async function fetchCards() {
     setLoading(true);
     const { data, error } = await supabase
       .from('credit_cards')
-      .select('id, holder, bank_name, network, last_four, label, is_active')
+      .select('id, holder, bank_name, network, last_four, label, is_active, bill_generate_day, bill_pay_day')
       .order('holder')
       .order('bank_name')
       .order('network');
 
     if (error) {
-      if (error.message.includes('credit_cards') || error.message.includes('schema cache')) {
+      const missingBillColumns = /bill_generate_day|bill_pay_day/i.test(error.message);
+      if (missingBillColumns) {
+        const fallback = await supabase
+          .from('credit_cards')
+          .select('id, holder, bank_name, network, last_four, label, is_active')
+          .order('holder')
+          .order('bank_name')
+          .order('network');
+        if (fallback.error) {
+          toast.error(fallback.error.message);
+        } else {
+          setTableMissing(false);
+          setCards(((fallback.data || []) as CreditCardRow[]).map((card) => ({
+            ...card,
+            bill_generate_day: null,
+            bill_pay_day: null,
+          })));
+          toast.error('Run supabase/credit_card_bill_dates.sql in Supabase to save bill dates');
+        }
+      } else if (error.message.includes('credit_cards') || error.message.includes('schema cache')) {
         setTableMissing(true);
         setCards([]);
       } else {
@@ -646,6 +675,14 @@ function CreditCardsSection() {
   }
 
   useEffect(() => { fetchCards(); }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    enrichBillNotices(cardBillNotices(cards)).then((notices) => {
+      if (!cancelled) setBillNotices(notices);
+    });
+    return () => { cancelled = true; };
+  }, [cards]);
 
   const filtered = filterHolder ? cards.filter((c) => c.holder === filterHolder) : cards;
 
@@ -662,6 +699,13 @@ function CreditCardsSection() {
       return;
     }
 
+    const generateDay = form.bill_generate_day ? Number(form.bill_generate_day) : null;
+    const payDay = form.bill_pay_day ? Number(form.bill_pay_day) : null;
+    if ((generateDay != null && (generateDay < 1 || generateDay > 31)) || (payDay != null && (payDay < 1 || payDay > 31))) {
+      toast.error('Bill dates must be a day of the month from 1 to 31');
+      return;
+    }
+
     const payload = {
       holder: form.holder,
       bank_name: form.bank_name.trim(),
@@ -669,6 +713,8 @@ function CreditCardsSection() {
       last_four: form.last_four.trim(),
       label,
       is_active: form.is_active,
+      bill_generate_day: generateDay,
+      bill_pay_day: payDay,
     };
 
     if (editingId) {
@@ -695,6 +741,8 @@ function CreditCardsSection() {
       last_four: card.last_four,
       label: card.label,
       is_active: card.is_active,
+      bill_generate_day: card.bill_generate_day ? String(card.bill_generate_day) : '',
+      bill_pay_day: card.bill_pay_day ? String(card.bill_pay_day) : '',
     });
     setDialogOpen(true);
   }
@@ -770,6 +818,32 @@ function CreditCardsSection() {
                 <Label>Last 4 digits (optional)</Label>
                 <Input value={form.last_four} onChange={(e) => setForm({ ...form, last_four: e.target.value.replace(/\D/g, '').slice(0, 4), label: '' })} placeholder="4821" maxLength={4} />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Bill generate date</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={form.bill_generate_day}
+                    onChange={(e) => setForm({ ...form, bill_generate_day: e.target.value })}
+                    placeholder="e.g. 15"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">Day of each month. Notice starts 2 days before.</p>
+                </div>
+                <div>
+                  <Label>Bill paying date</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={form.bill_pay_day}
+                    onChange={(e) => setForm({ ...form, bill_pay_day: e.target.value })}
+                    placeholder="e.g. 5"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">Day of each month the bill should be paid.</p>
+                </div>
+              </div>
               <div>
                 <Label>Display label</Label>
                 <Input
@@ -787,6 +861,22 @@ function CreditCardsSection() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {billNotices.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <p className="font-semibold">Bill generating soon</p>
+          <ul className="mt-1 space-y-1">
+            {billNotices.map((notice) => (
+              <li key={notice.card.id}>
+                <Link href={capitalPayHref(notice)} className="font-medium underline underline-offset-2">
+                  {billNoticeText(notice)}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-amber-800/80">Click a bill to pay it from Capital.</p>
+        </div>
+      )}
 
       <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit flex-wrap">
         <button
@@ -816,22 +906,28 @@ function CreditCardsSection() {
                 <TableHead>Bank</TableHead>
                 <TableHead>Network</TableHead>
                 <TableHead>Last 4</TableHead>
+                <TableHead>Bill generate</TableHead>
+                <TableHead>Bill pay</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-6">Loading...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center py-6">Loading...</TableCell></TableRow>
               ) : filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-6 text-gray-500">No credit cards</TableCell></TableRow>
-              ) : filtered.map((card) => (
-                <TableRow key={card.id}>
+                <TableRow><TableCell colSpan={9} className="text-center py-6 text-gray-500">No credit cards</TableCell></TableRow>
+              ) : filtered.map((card) => {
+                const dueSoon = cardBillNotices([card]).length > 0;
+                return (
+                <TableRow key={card.id} className={dueSoon ? 'bg-amber-50' : undefined}>
                   <TableCell className="font-medium">{card.label}</TableCell>
                   <TableCell>{card.holder}</TableCell>
                   <TableCell>{card.bank_name}</TableCell>
                   <TableCell>{card.network}</TableCell>
                   <TableCell>{card.last_four || <span className="text-gray-300">-</span>}</TableCell>
+                  <TableCell>{card.bill_generate_day ? ordinalDay(card.bill_generate_day) : <span className="text-gray-300">-</span>}</TableCell>
+                  <TableCell>{card.bill_pay_day ? ordinalDay(card.bill_pay_day) : <span className="text-gray-300">-</span>}</TableCell>
                   <TableCell>
                     {card.is_active ? (
                       <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Active</Badge>
@@ -846,7 +942,8 @@ function CreditCardsSection() {
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>

@@ -10,6 +10,8 @@ import {
   fetchMonthlyPlReport,
   fetchMonthlyTrendReport,
   fetchVehiclePlReport,
+  fetchCapitalPaidBack,
+  type CapitalPaidRow,
   type DailyTripDay,
   type MonthlyPlReport,
   type MonthlyTrendRow,
@@ -68,6 +70,7 @@ export default function ReportsPage() {
   const [monthlyTrend, setMonthlyTrend] = useState<MonthlyTrendRow[]>([]);
   const [vehiclePl, setVehiclePl] = useState<VehiclePlRow[]>([]);
   const [daily, setDaily] = useState<DailyTripDay[]>([]);
+  const [capitalPaid, setCapitalPaid] = useState<CapitalPaidRow[]>([]);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
 
   const hasActiveFilters =
@@ -117,16 +120,18 @@ export default function ReportsPage() {
       const filters = buildReportFilters(filterMonth, filterDateFrom, filterDateTo, filterVehicles, filterEntities);
 
       try {
-        const [m, v, d, trend] = await Promise.all([
+        const [m, v, d, trend, paidBack] = await Promise.all([
           fetchMonthlyPlReport(filters),
           fetchVehiclePlReport(filters),
           fetchDailyTripReport(filters),
           fetchMonthlyTrendReport(filters),
+          fetchCapitalPaidBack(filters),
         ]);
         setMonthly(m);
         setVehiclePl(v);
         setDaily(d);
         setMonthlyTrend(trend);
+        setCapitalPaid(paidBack);
         hasLoadedRef.current = true;
       } catch {
         toast.error('Failed to load reports');
@@ -162,6 +167,17 @@ export default function ReportsPage() {
       [],
       ['Category', 'Amount'],
       ...monthly.expensesByCategory.map((r) => [r.category, String(r.amount)]),
+      [],
+      ['Capital paid back', ''],
+      ['Date', 'Paid to', 'Amount', 'Paid from', 'Note'],
+      ...capitalPaid.map((r) => [
+        r.date,
+        r.contributor,
+        String(r.value),
+        r.payment_source || '',
+        r.description || '',
+      ]),
+      ['Total', '', String(capitalPaid.reduce((sum, r) => sum + r.value, 0)), '', ''],
     ];
     downloadCsv(`monthly-pl-${filterMonth || 'custom'}.csv`, rows);
   }
@@ -416,6 +432,53 @@ export default function ReportsPage() {
                               <TableCell className="text-right font-medium">{formatCurrency(r.amount)}</TableCell>
                             </TableRow>
                           ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Capital paid back</CardTitle>
+                    <p className="text-xs text-gray-500">
+                      Money given back to partners. Paid from Revenue reduces cash available.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Paid to</TableHead>
+                          <TableHead>Paid from</TableHead>
+                          <TableHead>Note</TableHead>
+                          <TableHead className="text-right">Amount</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {capitalPaid.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="text-center text-gray-500">No payments in this period</TableCell>
+                          </TableRow>
+                        ) : (
+                          <>
+                            {capitalPaid.map((r) => (
+                              <TableRow key={r.id}>
+                                <TableCell className="whitespace-nowrap">{formatDate(r.date)}</TableCell>
+                                <TableCell className="font-medium">{r.contributor}</TableCell>
+                                <TableCell>{r.payment_source || '—'}</TableCell>
+                                <TableCell className="max-w-[220px] truncate">{r.description || '—'}</TableCell>
+                                <TableCell className="text-right font-medium">{formatCurrency(r.value)}</TableCell>
+                              </TableRow>
+                            ))}
+                            <TableRow>
+                              <TableCell colSpan={4} className="font-medium">Total</TableCell>
+                              <TableCell className="text-right font-semibold">
+                                {formatCurrency(capitalPaid.reduce((sum, r) => sum + r.value, 0))}
+                              </TableCell>
+                            </TableRow>
+                          </>
                         )}
                       </TableBody>
                     </Table>

@@ -14,6 +14,7 @@ import {
   Wallet,
   HandCoins,
   Settings,
+  CreditCard,
   LogOut,
   Menu,
   X,
@@ -27,6 +28,7 @@ const navItems = [
   { href: '/expense-advances', label: 'Expense Advances', icon: HandCoins },
   { href: '/vehicles', label: 'Vehicles', icon: Truck },
   { href: '/capital', label: 'Capital', icon: Landmark },
+  { href: '/credit-cards', label: 'Credit Cards', icon: CreditCard },
   { href: '/reports', label: 'Reports', icon: FileBarChart },
   { href: '/payroll', label: 'Payroll', icon: Wallet },
   { href: '/admin', label: 'Admin', icon: Settings },
@@ -41,14 +43,22 @@ export function Sidebar({
   overdueCount = 0,
   warningCount = 0,
   tripOverdueCount = 0,
+  cardBillCount = 0,
 }: {
   overdueCount?: number;
   warningCount?: number;
   tripOverdueCount?: number;
+  cardBillCount?: number;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const mobileBadgeCount = overdueCount > 0 ? overdueCount : tripOverdueCount > 0 ? tripOverdueCount : warningCount;
+  const mobileBadgeCount = overdueCount > 0
+    ? overdueCount
+    : tripOverdueCount > 0
+      ? tripOverdueCount
+      : cardBillCount > 0
+        ? cardBillCount
+        : warningCount;
   const mobileBadgeIsOverdue = overdueCount > 0 || tripOverdueCount > 0;
 
   return (
@@ -97,9 +107,11 @@ export function Sidebar({
               (item.href !== '/' && pathname.startsWith(item.href));
             const isAdvances = item.href === '/expense-advances';
             const isTrips = item.href === '/trips';
+            const isCards = item.href === '/credit-cards';
             const showOverdue = isAdvances && overdueCount > 0;
             const showWarning = isAdvances && warningCount > 0;
             const showTripOverdue = isTrips && tripOverdueCount > 0;
+            const showCardBills = isCards && cardBillCount > 0;
             return (
               <Link
                 key={item.href}
@@ -113,6 +125,7 @@ export function Sidebar({
                   showOverdue && !isActive && 'bg-red-50 text-red-800 hover:bg-red-100',
                   !showOverdue && showWarning && !isActive && 'bg-amber-50 text-amber-900 hover:bg-amber-100',
                   showTripOverdue && !isActive && 'bg-red-50 text-red-800 hover:bg-red-100',
+                  showCardBills && !isActive && 'bg-amber-50 text-amber-900 hover:bg-amber-100',
                 )}
               >
                 <item.icon size={18} />
@@ -134,6 +147,11 @@ export function Sidebar({
                 {showTripOverdue && (
                   <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white">
                     {formatBadgeCount(tripOverdueCount)}
+                  </span>
+                )}
+                {showCardBills && (
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-bold text-white">
+                    {formatBadgeCount(cardBillCount)}
                   </span>
                 )}
               </Link>

@@ -9,8 +9,12 @@ CREATE TABLE IF NOT EXISTS credit_cards (
   last_four TEXT NOT NULL DEFAULT '',
   label TEXT NOT NULL,
   is_active BOOLEAN NOT NULL DEFAULT true,
+  bill_generate_day SMALLINT,
+  bill_pay_day SMALLINT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (holder, bank_name, network, last_four)
+  UNIQUE (holder, bank_name, network, last_four),
+  CONSTRAINT credit_cards_bill_generate_day_check CHECK (bill_generate_day IS NULL OR bill_generate_day BETWEEN 1 AND 31),
+  CONSTRAINT credit_cards_bill_pay_day_check CHECK (bill_pay_day IS NULL OR bill_pay_day BETWEEN 1 AND 31)
 );
 
 CREATE INDEX IF NOT EXISTS idx_credit_cards_holder ON credit_cards(holder);
