@@ -3,7 +3,7 @@
 import { useCallback, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { Sidebar } from '@/components/sidebar';
-import { AuthGate } from '@/components/auth-gate';
+import { SessionProvider } from '@/components/session-provider';
 import { ExpenseAdvanceOverdueNotifier } from '@/components/expense-advance-overdue-notifier';
 import { ExpenseAdvanceOverdueBanner } from '@/components/expense-advance-overdue-banner';
 import { TripPaymentOverdueNotifier } from '@/components/trip-payment-overdue-notifier';
@@ -11,11 +11,11 @@ import { CreditCardBillNotifier } from '@/components/credit-card-bill-notifier';
 import { CreditCardBillBanner } from '@/components/credit-card-bill-banner';
 import type { CardBillNotice } from '@/lib/credit-cards';
 
-const PUBLIC_ROUTES = ['/submit'];
+const BARE_ROUTES = ['/login'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isPublic = PUBLIC_ROUTES.some(r => pathname.startsWith(r));
+  const isBare = BARE_ROUTES.some(r => pathname === r || pathname.startsWith(r + '/'));
   const [overdueCount, setOverdueCount] = useState(0);
   const [warningCount, setWarningCount] = useState(0);
   const [tripOverdueCount, setTripOverdueCount] = useState(0);
@@ -33,12 +33,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setCardBillNotices(notices);
   }, []);
 
-  if (isPublic) {
+  if (isBare) {
     return <>{children}</>;
   }
 
   return (
-    <AuthGate>
+    <SessionProvider>
       <ExpenseAdvanceOverdueNotifier onAlerts={onAlerts} />
       <TripPaymentOverdueNotifier onOverdue={onTripOverdue} />
       <CreditCardBillNotifier onNotices={onCardBills} />
@@ -63,6 +63,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
         {children}
       </main>
-    </AuthGate>
+    </SessionProvider>
   );
 }

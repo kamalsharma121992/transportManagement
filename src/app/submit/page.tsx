@@ -22,7 +22,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Truck, CheckCircle2, Pencil, Plus, ArrowLeft } from 'lucide-react';
+import { CheckCircle2, Pencil, Plus } from 'lucide-react';
+import { PageHeader } from '@/components/page-header';
 import { toast } from 'sonner';
 
 const emptyForm = {
@@ -271,8 +272,7 @@ export default function SubmitExpensePage() {
   if (submitted) {
     const sf = submittedForm;
     return (
-      <div className="min-h-screen bg-gray-50 p-4">
-        <div className="max-w-lg mx-auto pt-8">
+      <div className="max-w-lg">
           <Card>
             <CardContent className="pt-8 pb-6 px-6">
               <div className="text-center mb-6">
@@ -360,27 +360,13 @@ export default function SubmitExpensePage() {
               </div>
             </CardContent>
           </Card>
-        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-lg mx-auto">
-        {/* Back + Header */}
-        <div className="pt-4 mb-6">
-          <a href="/" className="inline-flex items-center gap-2 text-sm font-bold text-gray-800 hover:text-blue-600 bg-white border rounded-lg px-3 py-2 shadow-sm mb-4">
-            <ArrowLeft className="h-4 w-4" /> Back to Home
-          </a>
-          <div className="text-center">
-            <div className="inline-flex items-center justify-center w-12 h-12 bg-blue-100 rounded-full mb-2">
-              <Truck className="h-6 w-6 text-blue-600" />
-            </div>
-            <h1 className="text-xl font-bold text-gray-900">JM Transport</h1>
-            <p className="text-sm text-gray-500">Submit Expense</p>
-          </div>
-        </div>
+    <div className="max-w-lg space-y-6">
+      <PageHeader title="Submit expense" />
 
         <Card>
           <CardContent className="pt-6 pb-4">
@@ -537,11 +523,6 @@ export default function SubmitExpensePage() {
             </form>
           </CardContent>
         </Card>
-
-        <p className="text-center text-xs text-gray-400 mt-4">
-          JM Transport Expense Tracker
-        </p>
-      </div>
     </div>
   );
 }

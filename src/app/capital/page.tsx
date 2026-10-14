@@ -37,6 +37,7 @@ import { buildTextSearchFilter, CAPITAL_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { useFilterQuery } from '@/hooks/use-filter-query';
+import { recordAudit } from '@/lib/audit-client';
 import { SortableTableHead } from '@/components/sortable-table-head';
 
 const CAPITAL_TYPES = ['Credit Card', 'Cash', 'Bank Transfer', 'Payout', 'Card Payment'] as const;
@@ -365,6 +366,17 @@ export default function CapitalPage() {
           description: payoutForm.description.trim() || `${payoutForm.contributor} card bill`,
           payerCardId: payoutForm.payer_card_id ? Number(payoutForm.payer_card_id) : null,
         });
+        const billCard = creditCards.find((card) => card.id === Number(payoutForm.card_id));
+        const payerCard = payoutForm.payer_card_id
+          ? creditCards.find((card) => card.id === Number(payoutForm.payer_card_id))
+          : undefined;
+        const billName = billCard ? `${formatCardLabel(billCard)} · ${billCard.holder}` : payoutForm.contributor;
+        const paidFrom = payerCard ? `${formatCardLabel(payerCard)} · ${payerCard.holder}` : payoutForm.payment_source;
+        recordAudit(
+          'add',
+          'Capital',
+          `Paid ${billName} bill ${formatCurrency(payoutForm.value)} on ${formatDate(payoutForm.date)} from ${paidFrom}`,
+        );
       } else {
         const { error } = await supabase.from('capital_contributions').insert({
           date: payoutForm.date,

@@ -48,6 +48,7 @@ import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
+import { recordAudit } from '@/lib/audit-client';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { readMonthParam, readSortParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
 import { SortableTableHead } from '@/components/sortable-table-head';
@@ -561,6 +562,20 @@ export default function ExpensesPage() {
     }));
   }
 
+  function auditCardLabel(cardId: number | null, paidByPerson: string | null): string {
+    if (!cardId) return '';
+    const card = creditCards.find((c) => c.id === cardId);
+    return expensePaidFromLabel(
+      { card_id: cardId, payment_source: null, paid_by_person: paidByPerson },
+      card,
+    );
+  }
+
+  function expenseAuditSummary(action: 'Added' | 'Updated' | 'Deleted', category: string, amount: number, date: string, cardNote: string) {
+    const base = `${action} ${category} ${formatCurrency(amount)} on ${formatDate(date)}`;
+    return cardNote ? `${base} · ${cardNote}` : base;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (form.category === EXPENSE_ADVANCE_CATEGORY && !form.person.trim()) {
@@ -648,6 +663,14 @@ export default function ExpensesPage() {
           createIfMissing: original ? !savedExpenseNeedsCapital(original) : false,
         });
         toast.success(capitalResultMessage(capitalResult, 'updated'));
+        const previousCard = original?.card_id ? auditCardLabel(original.card_id, original.paid_by_person) : '';
+        const nextCard = useCard ? auditCardLabel(cardId, cardHolder) : '';
+        const cardNote = previousCard && nextCard && previousCard !== nextCard
+          ? `${previousCard} → ${nextCard}`
+          : previousCard && !nextCard
+            ? `card removed (was ${previousCard})`
+            : nextCard;
+        recordAudit('edit', 'Expenses', expenseAuditSummary('Updated', form.category, Number(form.amount), form.date, cardNote));
       } else {
         const { data: inserted, error } = await supabase.from('expenses').insert(payload).select('id').single();
         if (error) { toast.error(error.message); return; }
@@ -675,14 +698,23 @@ export default function ExpensesPage() {
               description: form.description || null,
             });
             toast.success('Expense Advance added — track settlement under Expense Advances');
+            recordAudit('add', 'Expenses', `Added expense advance ₹${form.amount} for ${form.person} on ${form.date}`);
           } catch (syncErr) {
             toast.error(syncErr instanceof Error ? syncErr.message : 'Expense saved but expense advance sync failed');
           }
         } else if (inserted?.id) {
           const capitalResult = await syncExpenseCapital(inserted.id, capitalInput);
           toast.success(capitalResultMessage(capitalResult, 'added'));
+          recordAudit('add', 'Expenses', expenseAuditSummary(
+            'Added',
+            form.category,
+            Number(form.amount),
+            form.date,
+            useCard ? auditCardLabel(cardId, cardHolder) : '',
+          ));
         } else {
           toast.success('Expense added');
+          recordAudit('add', 'Expenses', expenseAuditSummary('Added', form.category, Number(form.amount), form.date, ''));
         }
       }
       closeExpenseDialog();
@@ -743,6 +775,9 @@ export default function ExpensesPage() {
     if (linkMissing) toast.success('Expense deleted. Run supabase/capital_source_expense.sql in Supabase so Capital stays linked.');
     else if (keptPaid) toast.success('Expense deleted. The paid capital charge was kept.');
     else toast.success('Expense deleted');
+    recordAudit('delete', 'Expenses', exp
+      ? expenseAuditSummary('Deleted', exp.category, Number(exp.amount), exp.date, auditCardLabel(exp.card_id, exp.paid_by_person))
+      : `Deleted expense ${id}`);
     fetchExpenses();
   }
 

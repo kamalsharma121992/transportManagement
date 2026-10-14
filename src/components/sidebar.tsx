@@ -9,29 +9,32 @@ import {
   Truck,
   Route,
   Receipt,
+  FilePlus,
   Landmark,
   FileBarChart,
   Wallet,
   HandCoins,
   Settings,
   CreditCard,
+  ScrollText,
   LogOut,
   Menu,
   X,
 } from 'lucide-react';
-import { logout } from '@/components/auth-gate';
+import { logout, useSession } from '@/components/session-provider';
+import { sessionCanOpen } from '@/lib/auth/pages';
 
 const navItems = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/trips', label: 'Trip Log', icon: Route },
-  { href: '/expenses', label: 'Expenses', icon: Receipt },
-  { href: '/expense-advances', label: 'Expense Advances', icon: HandCoins },
-  { href: '/vehicles', label: 'Vehicles', icon: Truck },
-  { href: '/capital', label: 'Capital', icon: Landmark },
-  { href: '/credit-cards', label: 'Credit Cards', icon: CreditCard },
-  { href: '/reports', label: 'Reports', icon: FileBarChart },
-  { href: '/payroll', label: 'Payroll', icon: Wallet },
-  { href: '/admin', label: 'Admin', icon: Settings },
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard, page: 'dashboard' },
+  { href: '/trips', label: 'Trip Log', icon: Route, page: 'trips' },
+  { href: '/expenses', label: 'Expenses', icon: Receipt, page: 'expenses' },
+  { href: '/expense-advances', label: 'Expense Advances', icon: HandCoins, page: 'expense-advances' },
+  { href: '/vehicles', label: 'Vehicles', icon: Truck, page: 'vehicles' },
+  { href: '/capital', label: 'Capital', icon: Landmark, page: 'capital' },
+  { href: '/credit-cards', label: 'Credit Cards', icon: CreditCard, page: 'credit-cards' },
+  { href: '/reports', label: 'Reports', icon: FileBarChart, page: 'reports' },
+  { href: '/payroll', label: 'Payroll', icon: Wallet, page: 'payroll' },
+  { href: '/admin', label: 'Admin', icon: Settings, page: 'admin' },
 ];
 
 function formatBadgeCount(n: number) {
@@ -51,7 +54,11 @@ export function Sidebar({
   cardBillCount?: number;
 }) {
   const pathname = usePathname();
+  const session = useSession();
   const [open, setOpen] = useState(false);
+  const visibleItems = navItems.filter(item => session && sessionCanOpen(session.pages, item.page));
+  const canAudit = !!session && sessionCanOpen(session.pages, 'audit');
+  const canSubmit = !!session && sessionCanOpen(session.pages, 'submit');
   const mobileBadgeCount = overdueCount > 0
     ? overdueCount
     : tripOverdueCount > 0
@@ -92,16 +99,16 @@ export function Sidebar({
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed top-0 left-0 z-40 h-full w-64 bg-white border-r shadow-sm transition-transform md:translate-x-0',
+          'fixed top-0 left-0 z-40 flex h-full w-64 flex-col bg-white border-r shadow-sm transition-transform md:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full'
         )}
       >
         <div className="p-6 border-b">
-          <h1 className="text-xl font-bold text-gray-900">JM Transport</h1>
-          <p className="text-xs text-gray-500 mt-1">Truck Management</p>
+          <h1 className="text-xl font-bold text-gray-900 truncate">{session?.name || 'JM Transport'}</h1>
+          <p className="text-xs text-gray-500 mt-1 truncate">{session ? `${session.role} · ${session.username}` : 'Truck Management'}</p>
         </div>
-        <nav className="p-4 space-y-1">
-          {navItems.map((item) => {
+        <nav className="min-h-0 flex-1 overflow-y-auto p-4 space-y-1">
+          {visibleItems.map((item) => {
             const isActive =
               pathname === item.href ||
               (item.href !== '/' && pathname.startsWith(item.href));
@@ -158,10 +165,40 @@ export function Sidebar({
             );
           })}
         </nav>
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t">
+        <div className="shrink-0 space-y-1 border-t p-3">
+          {canSubmit && (
+            <Link
+              href="/submit"
+              onClick={() => setOpen(false)}
+              className={cn(
+                'flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors',
+                pathname === '/submit'
+                  ? 'border-blue-200 bg-blue-50 text-blue-700'
+                  : 'border-gray-200 text-gray-700 hover:bg-gray-50',
+              )}
+            >
+              <FilePlus size={18} />
+              Submit expense
+            </Link>
+          )}
+          {canAudit && (
+            <Link
+              href="/audit"
+              onClick={() => setOpen(false)}
+              className={cn(
+                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                pathname === '/audit'
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+              )}
+            >
+              <ScrollText size={18} />
+              Audit log
+            </Link>
+          )}
           <button
             onClick={logout}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-red-50 hover:text-red-600 transition-colors w-full"
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-red-50 hover:text-red-600"
           >
             <LogOut size={18} />
             Logout

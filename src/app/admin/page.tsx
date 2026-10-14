@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useFilterQuery } from '@/hooks/use-filter-query';
-import { supabase, Route, Driver, Partner, JM_PARTNERS, PAID_BY_ENTITIES, EXPENSE_TYPES, type ExpenseType } from '@/lib/supabase';
+import { supabase, Driver, Partner, JM_PARTNERS, PAID_BY_ENTITIES, EXPENSE_TYPES, type ExpenseType } from '@/lib/supabase';
 import { type ExpenseCategory } from '@/lib/expense-categories';
 import {
   CARD_NETWORKS,
@@ -28,175 +28,16 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake, UserX, Tags, CreditCard } from 'lucide-react';
+import { Plus, Pencil, Trash2, Users, Handshake, UserX, Tags, CreditCard, Shield } from 'lucide-react';
+import { RolesSection, UsersSection } from '@/components/admin-access';
+import { useSession } from '@/components/session-provider';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
 
-type Tab = 'routes' | 'drivers' | 'partners' | 'categories' | 'credit_cards';
-
-// ─── Routes Section ───
-function RoutesSection() {
-  const [routes, setRoutes] = useState<Route[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0, commission: 0 });
-
-  const {
-    page,
-    pageSize,
-    setPage,
-    setPageSize,
-    totalItems: totalRoutes,
-    setTotalItems: setTotalRoutes,
-    totalPages,
-  } = useServerPagination();
-
-  async function fetch() {
-    setLoading(true);
-    const { from, to } = getSupabaseRange(page, pageSize);
-    const { data, count } = await supabase
-      .from('routes')
-      .select('*', { count: 'exact' })
-      .order('route_name')
-      .range(from, to);
-    setRoutes(data || []);
-    setTotalRoutes(count ?? 0);
-    setLoading(false);
-  }
-
-  useEffect(() => { fetch(); }, [page, pageSize]);
-
-  function autoName(origin: string, destination: string) {
-    const name = origin && destination ? `${origin.toLowerCase()}-${destination.toLowerCase()}` : '';
-    setForm(f => ({ ...f, origin, destination, route_name: name }));
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (editingId) {
-      const { error } = await supabase.from('routes').update(form).eq('id', editingId);
-      if (error) { toast.error(error.message); return; }
-      toast.success('Route updated');
-    } else {
-      const { error } = await supabase.from('routes').insert(form);
-      if (error) { toast.error(error.message); return; }
-      toast.success('Route added');
-    }
-    setDialogOpen(false); setEditingId(null);
-    setForm({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0, commission: 0 });
-    fetch();
-  }
-
-  function startEdit(r: Route) {
-    setEditingId(r.id);
-    setForm({ origin: r.origin, destination: r.destination, route_name: r.route_name, distance_km: Number(r.distance_km), standard_rate_per_ton: Number(r.standard_rate_per_ton), commission: Number(r.commission) || 0 });
-    setDialogOpen(true);
-  }
-
-  async function handleDelete(id: number) {
-    if (!confirm('Delete this route? This will fail if trips reference it.')) return;
-    const { error } = await supabase.from('routes').delete().eq('id', id);
-    if (error) { toast.error(error.message); return; }
-    toast.success('Route deleted');
-    fetch();
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-gray-500">{totalRoutes} routes</p>
-        <Button size="sm" onClick={() => { setEditingId(null); setForm({ origin: '', destination: '', route_name: '', distance_km: 0, standard_rate_per_ton: 0, commission: 0 }); setDialogOpen(true); }}>
-          <Plus className="h-4 w-4 mr-1" /> Add Route
-        </Button>
-        <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
-          <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>{editingId ? 'Edit Route' : 'New Route'}</DialogTitle></DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Origin</Label>
-                  <Input value={form.origin} onChange={(e) => autoName(e.target.value, form.destination)} required />
-                </div>
-                <div>
-                  <Label>Destination</Label>
-                  <Input value={form.destination} onChange={(e) => autoName(form.origin, e.target.value)} required />
-                </div>
-                <div className="col-span-2">
-                  <Label>Route Name</Label>
-                  <Input value={form.route_name} onChange={(e) => setForm({ ...form, route_name: e.target.value })} required />
-                </div>
-                <div>
-                  <Label>Distance (KM)</Label>
-                  <Input type="number" step="0.01" value={form.distance_km || ''} onChange={(e) => setForm({ ...form, distance_km: Number(e.target.value) })} required />
-                </div>
-                <div>
-                  <Label>Rate/Ton ({'\u20B9'})</Label>
-                  <Input type="number" step="0.01" value={form.standard_rate_per_ton || ''} onChange={(e) => setForm({ ...form, standard_rate_per_ton: Number(e.target.value) })} required />
-                </div>
-                <div>
-                  <Label>Commission ({'\u20B9'})</Label>
-                  <Input type="number" step="0.01" value={form.commission || ''} onChange={(e) => setForm({ ...form, commission: Number(e.target.value) })} />
-                </div>
-              </div>
-              <Button type="submit" className="w-full">{editingId ? 'Update' : 'Add'} Route</Button>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Route Name</TableHead>
-                <TableHead>Origin</TableHead>
-                <TableHead>Destination</TableHead>
-                <TableHead className="text-right">Distance</TableHead>
-                <TableHead className="text-right">Rate/Ton</TableHead>
-                <TableHead className="text-right">Commission</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-6">Loading...</TableCell></TableRow>
-              ) : routes.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-6 text-gray-500">No routes</TableCell></TableRow>
-              ) : routes.map(r => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-medium">{r.route_name}</TableCell>
-                  <TableCell>{r.origin}</TableCell>
-                  <TableCell>{r.destination}</TableCell>
-                  <TableCell className="text-right">{Number(r.distance_km)} km</TableCell>
-                  <TableCell className="text-right">{'\u20B9'}{Number(r.standard_rate_per_ton)}</TableCell>
-                  <TableCell className="text-right">{'\u20B9'}{Number(r.commission) || 0}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => startEdit(r)}><Pencil className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(r.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <PaginationControls
-            page={page}
-            pageSize={pageSize}
-            totalItems={totalRoutes}
-            totalPages={totalPages}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-          />
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
+type Tab = 'drivers' | 'partners' | 'categories' | 'credit_cards' | 'users' | 'roles';
 
 // ─── Drivers Section ───
 const emptyDriverForm = {
@@ -1182,23 +1023,36 @@ function CategoriesSection() {
 
 // ─── Main Admin Page ───
 export default function AdminPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const session = useSession();
+
+  useEffect(() => {
+    const value = searchParams.get('tab');
+    if (value === 'routes') router.replace('/trips?tab=routes');
+    if (value === 'audit') router.replace('/audit');
+  }, [router, searchParams]);
   const [tab, setTab] = useState<Tab>(() => {
     const value = searchParams.get('tab');
-    if (value === 'drivers' || value === 'partners' || value === 'categories' || value === 'credit_cards' || value === 'routes') {
+    if (value === 'drivers' || value === 'partners' || value === 'categories' || value === 'credit_cards' || value === 'users' || value === 'roles') {
       return value;
     }
-    return 'routes';
+    return 'drivers';
   });
 
-  useFilterQuery([{ key: 'tab', value: tab, defaultValue: 'routes' }]);
+  useFilterQuery([{ key: 'tab', value: tab, defaultValue: 'drivers' }]);
 
   const tabs: { value: Tab; label: string; icon: any }[] = [
-    { value: 'routes', label: 'Routes', icon: RouteIcon },
     { value: 'drivers', label: 'Drivers', icon: Users },
     { value: 'partners', label: 'Partners', icon: Handshake },
     { value: 'categories', label: 'Categories', icon: Tags },
     { value: 'credit_cards', label: 'Credit Cards', icon: CreditCard },
+    ...(session?.role === 'Admin'
+      ? [
+          { value: 'users' as Tab, label: 'Users', icon: Shield },
+          { value: 'roles' as Tab, label: 'Roles', icon: Users },
+        ]
+      : []),
   ];
 
   return (
@@ -1220,11 +1074,12 @@ export default function AdminPage() {
         ))}
       </div>
 
-      {tab === 'routes' && <RoutesSection />}
       {tab === 'drivers' && <DriversSection />}
       {tab === 'partners' && <PartnersSection />}
       {tab === 'categories' && <CategoriesSection />}
       {tab === 'credit_cards' && <CreditCardsSection />}
+      {tab === 'users' && <UsersSection />}
+      {tab === 'roles' && <RolesSection />}
     </div>
   );
 }
