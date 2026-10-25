@@ -353,26 +353,12 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
-        <Card>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs text-sky-600 uppercase tracking-wide">JM Transport Expenses</p>
-            <p className="text-2xl font-bold text-sky-700">{formatCurrency(stats.jmTotal)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs text-orange-600 uppercase tracking-wide">Mahesh Expenses</p>
-            <p className="text-2xl font-bold text-orange-700">{formatCurrency(stats.maheshTotal)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs text-violet-600 uppercase tracking-wide">Capital Contributed</p>
-            <p className="text-2xl font-bold text-violet-700">{formatCurrency(stats.totalCapitalIn)}</p>
-          </CardContent>
-        </Card>
-      </div>
+      <Card>
+        <CardContent className="py-3 px-4">
+          <p className="text-xs text-violet-600 uppercase tracking-wide">Capital Contributed</p>
+          <p className="text-2xl font-bold text-violet-700">{formatCurrency(stats.totalCapitalIn)}</p>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
