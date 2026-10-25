@@ -113,7 +113,7 @@ export type Trip = {
   builty_urls: string[] | null;
 };
 
-export const TRIP_PAYMENT_STATUSES = ['Fully Paid', 'Pending'] as const;
+export const TRIP_PAYMENT_STATUSES = ['Fully Paid', 'Pending', 'Will not pay'] as const;
 export type TripPaymentStatus = (typeof TRIP_PAYMENT_STATUSES)[number];
 
 export type ExpenseType = 'vehicle' | 'operational' | 'personal' | 'other';

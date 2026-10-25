@@ -30,6 +30,7 @@ DECLARE
   trip_revenue numeric;
   pending_revenue numeric;
   collected_revenue numeric;
+  written_off_revenue numeric;
   exp_count bigint;
   exp_total numeric;
   jm_total numeric;
@@ -51,10 +52,11 @@ BEGIN
   END;
 
   SELECT count(*)::bigint,
-         coalesce(sum(total_revenue), 0),
-         coalesce(sum(CASE WHEN payment_status IS DISTINCT FROM 'Fully Paid' THEN coalesce(balance_due, 0) ELSE 0 END), 0),
-         coalesce(sum(CASE WHEN payment_status = 'Fully Paid' THEN total_revenue ELSE coalesce(advance_paid, 0) END), 0)
-  INTO trip_count, trip_revenue, pending_revenue, collected_revenue
+         coalesce(sum(CASE WHEN payment_status = 'Will not pay' THEN coalesce(advance_paid, 0) ELSE total_revenue END), 0),
+         coalesce(sum(CASE WHEN payment_status = 'Pending' THEN coalesce(balance_due, 0) ELSE 0 END), 0),
+         coalesce(sum(CASE WHEN payment_status = 'Fully Paid' THEN total_revenue ELSE coalesce(advance_paid, 0) END), 0),
+         coalesce(sum(CASE WHEN payment_status = 'Will not pay' THEN coalesce(balance_due, 0) ELSE 0 END), 0)
+  INTO trip_count, trip_revenue, pending_revenue, collected_revenue, written_off_revenue
   FROM trips t
   WHERE (p_date_from IS NULL OR t.date >= p_date_from)
     AND (p_date_to IS NULL OR t.date <= p_date_to)
@@ -107,6 +109,7 @@ BEGIN
     'totalRevenue', trip_revenue,
     'pendingRevenue', pending_revenue,
     'collectedRevenue', collected_revenue,
+    'writtenOffRevenue', written_off_revenue,
     'expenseCount', exp_count,
     'totalExpenses', exp_total,
     'jmTotal', jm_total,
@@ -116,7 +119,7 @@ BEGIN
     'dailyTrips', coalesce((
       SELECT jsonb_agg(jsonb_build_object('date', d.date, 'revenue', d.revenue) ORDER BY d.date)
       FROM (
-        SELECT t.date, sum(t.total_revenue) AS revenue
+        SELECT t.date, sum(CASE WHEN t.payment_status = 'Will not pay' THEN coalesce(t.advance_paid, 0) ELSE t.total_revenue END) AS revenue
         FROM trips t
         WHERE (p_date_from IS NULL OR t.date >= p_date_from)
           AND (p_date_to IS NULL OR t.date <= p_date_to)

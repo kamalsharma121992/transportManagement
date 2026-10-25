@@ -1,0 +1,27 @@
+name: Daily backup
+
+on:
+  schedule:
+    # Midnight India time (IST, UTC+5:30)
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - name: Dump database
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: npm run backup
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jm-transport-backup
+          path: backups/
+          retention-days: 90

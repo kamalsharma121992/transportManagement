@@ -28,7 +28,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake, UserX, Tags, CreditCard, Shield } from 'lucide-react';
+import { Plus, Pencil, Trash2, Route as RouteIcon, Users, Handshake, UserX, Tags, CreditCard, Shield, Download } from 'lucide-react';
 import { RolesSection, UsersSection } from '@/components/admin-access';
 import { RoutesManager } from '@/components/routes-manager';
 import { useSession } from '@/components/session-provider';
@@ -1041,6 +1041,30 @@ export default function AdminPage() {
   });
 
   useFilterQuery([{ key: 'tab', value: tab, defaultValue: 'drivers' }]);
+  const [backingUp, setBackingUp] = useState(false);
+
+  async function downloadBackup() {
+    setBackingUp(true);
+    try {
+      const res = await fetch('/api/backup?download=1', { credentials: 'include' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error || 'Backup failed');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `jm-transport-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Backup downloaded');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Backup failed');
+    } finally {
+      setBackingUp(false);
+    }
+  }
 
   const tabs: { value: Tab; label: string; icon: any }[] = [
     { value: 'routes', label: 'Routes', icon: RouteIcon },
@@ -1058,7 +1082,14 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Admin" />
+      <PageHeader
+        title="Admin"
+        actions={session?.role === 'Admin' ? (
+          <Button variant="outline" onClick={downloadBackup} disabled={backingUp}>
+            {backingUp ? 'Backing up…' : <><Download className="h-4 w-4 mr-2" /> Download backup</>}
+          </Button>
+        ) : undefined}
+      />
 
       <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
         {tabs.map(t => (

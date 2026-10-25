@@ -10,7 +10,7 @@ export type TripFormData = {
   commission: number;
   advance_paid: number;
   balance_due: number;
-  payment_status: 'Pending' | 'Fully Paid';
+  payment_status: 'Pending' | 'Fully Paid' | 'Will not pay';
   payment_expected_date: string;
   notes: string;
   builty_url: string;

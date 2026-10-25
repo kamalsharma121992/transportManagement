@@ -19,7 +19,7 @@ DECLARE
   jm_total numeric;
   mahesh_total numeric;
 BEGIN
-  SELECT count(*)::bigint, coalesce(sum(total_revenue), 0)
+  SELECT count(*)::bigint, coalesce(sum(CASE WHEN payment_status = 'Will not pay' THEN coalesce(advance_paid, 0) ELSE total_revenue END), 0)
   INTO trip_count, trip_revenue
   FROM trips t
   WHERE (p_date_from IS NULL OR t.date >= p_date_from)
@@ -119,7 +119,7 @@ BEGIN
         SELECT vehicle_number,
                count(*)::bigint AS trip_count,
                coalesce(sum(weight_tons), 0) AS total_weight,
-               coalesce(sum(total_revenue), 0) AS revenue
+               coalesce(sum(CASE WHEN payment_status = 'Will not pay' THEN coalesce(advance_paid, 0) ELSE total_revenue END), 0) AS revenue
         FROM trips
         WHERE (p_date_from IS NULL OR date >= p_date_from)
           AND (p_date_to IS NULL OR date <= p_date_to)
@@ -210,7 +210,7 @@ BEGIN
         LEFT JOIN LATERAL (
           SELECT count(*)::bigint AS trip_count,
                  coalesce(sum(weight_tons), 0) AS total_weight,
-                 coalesce(sum(total_revenue), 0) AS revenue,
+                 coalesce(sum(CASE WHEN payment_status = 'Will not pay' THEN coalesce(advance_paid, 0) ELSE total_revenue END), 0) AS revenue,
                  coalesce(jsonb_agg(
                    jsonb_build_object(
                      'id', t.id,
@@ -277,7 +277,7 @@ BEGIN
       ) d
     ) m
     LEFT JOIN (
-      SELECT date_trunc('month', t.date)::date AS month, coalesce(sum(t.total_revenue), 0) AS revenue
+      SELECT date_trunc('month', t.date)::date AS month, coalesce(sum(CASE WHEN t.payment_status = 'Will not pay' THEN coalesce(t.advance_paid, 0) ELSE t.total_revenue END), 0) AS revenue
       FROM trips t
       WHERE t.date >= (date_trunc('month', CURRENT_DATE) - interval '11 months')::date
         AND (p_vehicle IS NULL OR p_vehicle = '' OR t.vehicle_number = p_vehicle)

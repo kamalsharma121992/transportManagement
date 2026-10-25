@@ -1,6 +1,7 @@
 import { supabase, EXPENSE_ADVANCE_CATEGORY } from '@/lib/supabase';
 import { getDashboardDateRange } from '@/lib/dashboard-stats';
 import { applyInFilter, hasMultiValueFilters } from '@/lib/filter-helpers';
+import { tripRecognisedRevenue } from '@/lib/trip-payments';
 
 export type ReportFilterParams = {
   dateFrom: string | null;
@@ -204,7 +205,7 @@ export async function fetchMonthlyTrendReport(filters: ReportFilterParams): Prom
 
 async function fetchMonthlyTrendFallback(filters: ReportFilterParams): Promise<MonthlyTrendRow[]> {
   const from = `${last12MonthKeys()[0]}-01`;
-  let tripQ = supabase.from('trips').select('date, total_revenue').gte('date', from);
+  let tripQ = supabase.from('trips').select('date, total_revenue, payment_status, advance_paid').gte('date', from);
   tripQ = applyInFilter(tripQ, 'vehicle_number', filters.vehicles);
 
   let expQ = supabase
@@ -220,7 +221,7 @@ async function fetchMonthlyTrendFallback(filters: ReportFilterParams): Promise<M
   for (const t of trips || []) {
     const key = monthKey(t.date);
     const row = map.get(key) || { revenue: 0, expenses: 0 };
-    row.revenue += Number(t.total_revenue) || 0;
+    row.revenue += tripRecognisedRevenue(t);
     map.set(key, row);
   }
   for (const e of expenses || []) {
@@ -236,7 +237,7 @@ async function fetchMonthlyTrendFallback(filters: ReportFilterParams): Promise<M
 
 async function fetchMonthlyPlFallback(filters: ReportFilterParams): Promise<MonthlyPlReport> {
   let tripQ = applyReportDateRange(
-    supabase.from('trips').select('total_revenue'),
+    supabase.from('trips').select('total_revenue, payment_status, advance_paid'),
     filters.dateFrom,
     filters.dateTo,
   );
@@ -252,7 +253,7 @@ async function fetchMonthlyPlFallback(filters: ReportFilterParams): Promise<Mont
 
   const [{ data: trips }, { data: expenses }] = await Promise.all([tripQ, expQ]);
 
-  const totalRevenue = (trips || []).reduce((s, t) => s + Number(t.total_revenue), 0);
+  const totalRevenue = (trips || []).reduce((s, t) => s + tripRecognisedRevenue(t), 0);
   const byType = new Map<string, number>();
   const byCategory = new Map<string, number>();
   const byEntity = new Map<string, number>();
@@ -311,7 +312,7 @@ export async function fetchVehiclePlReport(filters: ReportFilterParams): Promise
 
 async function fetchVehiclePlFallback(filters: ReportFilterParams): Promise<VehiclePlRow[]> {
   let tripQ = applyReportDateRange(
-    supabase.from('trips').select('vehicle_number, weight_tons, total_revenue'),
+    supabase.from('trips').select('vehicle_number, weight_tons, total_revenue, payment_status, advance_paid'),
     filters.dateFrom,
     filters.dateTo,
   );
@@ -339,7 +340,7 @@ async function fetchVehiclePlFallback(filters: ReportFilterParams): Promise<Vehi
     const row = map.get(v) || { vehicle: v, tripCount: 0, totalWeight: 0, revenue: 0, vehicleExpenses: 0, netProfit: 0 };
     row.tripCount += 1;
     row.totalWeight += Number(t.weight_tons);
-    row.revenue += Number(t.total_revenue);
+    row.revenue += tripRecognisedRevenue(t);
     map.set(v, row);
   }
 
@@ -431,7 +432,7 @@ async function fetchDailyTripFallback(filters: ReportFilterParams): Promise<Dail
     const day = ensureDay(t.date);
     day.tripCount += 1;
     day.totalWeight += Number(t.weight_tons);
-    day.revenue += Number(t.total_revenue);
+    day.revenue += tripRecognisedRevenue(t);
     day.trips.push({
       id: t.id,
       vehicle_number: t.vehicle_number,

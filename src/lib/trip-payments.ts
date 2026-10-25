@@ -1,15 +1,19 @@
 import { supabase, type TripPaymentStatus } from '@/lib/supabase';
 import { TRIP_PAYMENT_WARNING_DAYS } from '@/lib/constants';
 
-export const TRIP_PAYMENT_DISPLAY_FILTERS = ['Fully Paid', 'Pending', 'Partial Pending'] as const;
+export const TRIP_PAYMENT_DISPLAY_FILTERS = ['Fully Paid', 'Pending', 'Partial Pending', 'Will not pay'] as const;
 export type TripPaymentDisplayStatus = (typeof TRIP_PAYMENT_DISPLAY_FILTERS)[number];
 
 export function todayDateString(d = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+export function isTripWrittenOff(status: string): boolean {
+  return status === 'Will not pay';
+}
+
 export function isTripUnpaid(status: string): boolean {
-  return status !== 'Fully Paid';
+  return status === 'Pending';
 }
 
 export function isTripPaymentOverdue(trip: {
@@ -43,6 +47,7 @@ export function getTripPaymentDisplayStatus(trip: {
   advance_paid?: number | null;
 }): TripPaymentDisplayStatus {
   if (trip.payment_status === 'Fully Paid') return 'Fully Paid';
+  if (trip.payment_status === 'Will not pay') return 'Will not pay';
   if (Number(trip.advance_paid || 0) > 0) return 'Partial Pending';
   return 'Pending';
 }
@@ -58,12 +63,58 @@ export function isFullPendingAmounts(trip: {
     && Number(trip.balance_due || 0) === Number(trip.total_revenue || 0);
 }
 
+export function withWillNotPayAmounts<T extends { advance_paid: number; balance_due: number; total_revenue: number }>(
+  form: T,
+): T {
+  const advance = Number(form.advance_paid) || 0;
+  return { ...form, balance_due: Math.max(0, Number(form.total_revenue) - advance) };
+}
+
+export type TripPaymentAmountRow = {
+  payment_status: string;
+  total_revenue?: number | null;
+  advance_paid?: number | null;
+  balance_due?: number | null;
+};
+
+/** Amount that counts as revenue: billed, minus any Will not pay balance. */
+export function tripRecognisedRevenue(t: TripPaymentAmountRow): number {
+  if (t.payment_status === 'Will not pay') return Number(t.advance_paid) || 0;
+  return Number(t.total_revenue) || 0;
+}
+
+export function tripPaymentAmounts(trips: TripPaymentAmountRow[]) {
+  let pendingRevenue = 0;
+  let collectedRevenue = 0;
+  let writtenOffRevenue = 0;
+  trips.forEach((t) => {
+    const advance = Number(t.advance_paid) || 0;
+    const due = Number(t.balance_due) || 0;
+    const billed = Number(t.total_revenue) || 0;
+    if (t.payment_status === 'Fully Paid') {
+      collectedRevenue += billed;
+    } else if (t.payment_status === 'Will not pay') {
+      collectedRevenue += advance;
+      writtenOffRevenue += due;
+    } else {
+      pendingRevenue += due;
+      collectedRevenue += advance;
+    }
+  });
+  return {
+    pendingRevenue,
+    collectedRevenue,
+    writtenOffRevenue,
+    revenue: collectedRevenue + pendingRevenue,
+  };
+}
+
 export async function fetchOverdueTripCount(): Promise<number> {
   const today = todayDateString();
   const { count, error } = await supabase
     .from('trips')
     .select('id', { count: 'exact', head: true })
-    .neq('payment_status', 'Fully Paid')
+    .eq('payment_status', 'Pending')
     .not('payment_expected_date', 'is', null)
     .lte('payment_expected_date', today);
 
@@ -73,6 +124,7 @@ export async function fetchOverdueTripCount(): Promise<number> {
 
 export function normalizeTripPaymentStatus(status: string | null | undefined): TripPaymentStatus {
   if (status === 'Fully Paid') return 'Fully Paid';
+  if (status === 'Will not pay') return 'Will not pay';
   return 'Pending';
 }
 
@@ -94,19 +146,22 @@ export function applyTripPaymentDisplayFilter<Q>(query: Q, selected: readonly st
   const hasFullyPaid = filters.includes('Fully Paid');
   const hasPending = filters.includes('Pending');
   const hasPartial = filters.includes('Partial Pending');
+  const hasWrittenOff = filters.includes('Will not pay');
 
   if (filters.length === 1) {
     if (hasFullyPaid) return q.eq('payment_status', 'Fully Paid') as Q;
+    if (hasWrittenOff) return q.eq('payment_status', 'Will not pay') as Q;
     if (hasPending) return q.eq('payment_status', 'Pending').eq('advance_paid', 0) as Q;
     if (hasPartial) return q.eq('payment_status', 'Pending').gt('advance_paid', 0) as Q;
   }
 
-  if (hasPending && hasPartial && !hasFullyPaid) {
+  if (hasPending && hasPartial && !hasFullyPaid && !hasWrittenOff) {
     return q.eq('payment_status', 'Pending') as Q;
   }
 
   const clauses: string[] = [];
   if (hasFullyPaid) clauses.push('payment_status.eq."Fully Paid"');
+  if (hasWrittenOff) clauses.push('payment_status.eq."Will not pay"');
   if (hasPending && hasPartial) {
     clauses.push('payment_status.eq."Pending"');
   } else if (hasPending) {

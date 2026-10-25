@@ -1,7 +1,7 @@
 import type { Trip } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports';
-import { getTripPaymentDisplayStatus, isTripUnpaid } from '@/lib/trip-payments';
+import { getTripPaymentDisplayStatus, tripPaymentAmounts } from '@/lib/trip-payments';
 import { normalizeImageUrls } from '@/lib/image-urls';
 
 /** Columns for CSV export */
@@ -56,18 +56,14 @@ export function tripExportSuffix(
 }
 
 export function tripExportTotals(trips: Trip[]) {
+  const payments = tripPaymentAmounts(trips);
   return {
     count: trips.length,
-    revenue: trips.reduce((s, t) => s + Number(t.total_revenue), 0),
+    revenue: payments.revenue,
     weight: trips.reduce((s, t) => s + Number(t.weight_tons), 0),
-    pendingRevenue: trips.reduce((s, t) => (
-      isTripUnpaid(t.payment_status) ? s + Number(t.balance_due || 0) : s
-    ), 0),
-    paidRevenue: trips.reduce((s, t) => (
-      t.payment_status === 'Fully Paid'
-        ? s + Number(t.total_revenue)
-        : s + Number(t.advance_paid || 0)
-    ), 0),
+    pendingRevenue: payments.pendingRevenue,
+    paidRevenue: payments.collectedRevenue,
+    writtenOffRevenue: payments.writtenOffRevenue,
   };
 }
 
@@ -106,6 +102,7 @@ export function downloadTripsCsv(trips: Trip[], suffix: string): void {
     ['', '', '', 'TOTAL', totals.weight.toFixed(2), '', '', '', String(totals.revenue), '', '', '', '', '', '', ''],
     ['', '', '', 'Pending', '', '', '', '', String(totals.pendingRevenue), '', '', '', '', '', '', ''],
     ['', '', '', 'Collected', '', '', '', '', String(totals.paidRevenue), '', '', '', '', '', '', ''],
+    ['', '', '', 'Will not pay', '', '', '', '', String(totals.writtenOffRevenue), '', '', '', '', '', '', ''],
   ]);
 }
 
@@ -126,6 +123,7 @@ function buildTripsPdfHtml(params: {
   weight: number;
   pendingRevenue: number;
   paidRevenue: number;
+  writtenOffRevenue: number;
   generatedOn: string;
 }): string {
   const rows = params.trips;
@@ -185,6 +183,7 @@ function buildTripsPdfHtml(params: {
     <div>Weight <strong>${params.weight.toFixed(2)} T</strong></div>
     <div class="due">Due <strong>${escapeHtml(formatCurrency(params.pendingRevenue))}</strong></div>
     <div>Collected <strong>${escapeHtml(formatCurrency(params.paidRevenue))}</strong></div>
+    <div>Will not pay <strong>${escapeHtml(formatCurrency(params.writtenOffRevenue))}</strong></div>
   </div>
   <table>
     <thead>
@@ -219,6 +218,7 @@ export function printTripsPdf(params: {
   weight: number;
   pendingRevenue: number;
   paidRevenue: number;
+  writtenOffRevenue: number;
   generatedOn: string;
   fileSuffix?: string;
 }): void {

@@ -16,8 +16,11 @@ import {
   isTripPaymentDueSoon,
   isTripPaymentOverdue,
   isTripUnpaid,
+  isTripWrittenOff,
   normalizeTripPaymentStatus,
   applyTripPaymentDisplayFilter,
+  tripPaymentAmounts,
+  withWillNotPayAmounts,
 } from '@/lib/trip-payments';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,7 +41,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Eye, Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Download, ImageIcon } from 'lucide-react';
+import { Eye, Plus, Pencil, Trash2, Upload, FileText, Loader2, X, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, Download, ImageIcon, Ban } from 'lucide-react';
 import { toast } from 'sonner';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
@@ -99,6 +102,14 @@ function withFullPendingAmounts<T extends { advance_paid: number; balance_due: n
 ): T {
   if (!fullPending) return form;
   return { ...form, advance_paid: 0, balance_due: form.total_revenue };
+}
+
+function applyPaymentAmounts<T extends { payment_status: string; advance_paid: number; balance_due: number; total_revenue: number }>(
+  form: T,
+  fullPending: boolean,
+): T {
+  if (form.payment_status === 'Will not pay') return withWillNotPayAmounts(form);
+  return withFullPendingAmounts(form, fullPending && form.payment_status === 'Pending');
 }
 
 export default function TripsPage() {
@@ -166,7 +177,7 @@ export default function TripsPage() {
     { key: 'sort', value: sortColumn, defaultValue: 'date' },
     { key: 'dir', value: sortDirection, defaultValue: 'desc' },
   ]);
-  const [summary, setSummary] = useState({ count: 0, revenue: 0, weight: 0, pendingRevenue: 0, paidRevenue: 0 });
+  const [summary, setSummary] = useState({ count: 0, revenue: 0, weight: 0, pendingRevenue: 0, paidRevenue: 0, writtenOffRevenue: 0 });
 
   const hasActiveFilters = filterMonth !== currentMonth || !!filterDateFrom || !!filterDateTo || filterVehicles.length > 0 || filterRoutes.length > 0 || filterDrivers.length > 0 || filterPaymentStatuses.length > 0 || !!searchQuery;
 
@@ -276,18 +287,14 @@ export default function TripsPage() {
     }[];
     setTrips(data || []);
     setTotalTrips(count ?? 0);
+    const payments = tripPaymentAmounts(rows);
     setSummary({
       count: count ?? 0,
-      revenue: rows.reduce((s, t) => s + Number(t.total_revenue), 0),
+      revenue: payments.revenue,
       weight: rows.reduce((s, t) => s + Number(t.weight_tons), 0),
-      pendingRevenue: rows.reduce((s, t) => (
-        isTripUnpaid(t.payment_status) ? s + Number(t.balance_due || 0) : s
-      ), 0),
-      paidRevenue: rows.reduce((s, t) => (
-        t.payment_status === 'Fully Paid'
-          ? s + Number(t.total_revenue)
-          : s + Number(t.advance_paid || 0)
-      ), 0),
+      pendingRevenue: payments.pendingRevenue,
+      paidRevenue: payments.collectedRevenue,
+      writtenOffRevenue: payments.writtenOffRevenue,
     });
     setLoading(false);
   }
@@ -370,6 +377,7 @@ export default function TripsPage() {
               weight: summary.weight,
               pendingRevenue: summary.pendingRevenue,
               paidRevenue: summary.paidRevenue,
+              writtenOffRevenue: summary.writtenOffRevenue,
             }
           : tripExportTotals(rows);
       }
@@ -653,26 +661,26 @@ export default function TripsPage() {
     }
     const rate = Number(route.standard_rate_per_ton) || 0;
     const commission = Number(route.commission) || 0;
-    setForm((f) => withFullPendingAmounts({
+    setForm((f) => applyPaymentAmounts({
       ...f,
       route_name: routeName,
       distance_km: Number(route.distance_km) || f.distance_km,
       rate_per_ton: rate,
       commission,
       total_revenue: calcNetRevenue(f.weight_tons, rate, commission),
-    }, fullPending && f.payment_status === 'Pending'));
+    }, fullPending));
   }
 
   function recalcRevenue(weight: number, rate: number, commission?: number) {
     setForm((f) => {
       const nextCommission = commission ?? f.commission;
-      return withFullPendingAmounts({
+      return applyPaymentAmounts({
         ...f,
         weight_tons: weight,
         rate_per_ton: rate,
         commission: nextCommission,
         total_revenue: calcNetRevenue(weight, rate, nextCommission),
-      }, fullPending && f.payment_status === 'Pending');
+      }, fullPending);
     });
   }
 
@@ -817,6 +825,13 @@ export default function TripsPage() {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800">
           <CheckCircle2 className="h-3 w-3" /> Fully Paid
+        </span>
+      );
+    }
+    if (isTripWrittenOff(trip.payment_status)) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 text-gray-700">
+          <Ban className="h-3 w-3" /> Will not pay
         </span>
       );
     }
@@ -1009,15 +1024,21 @@ export default function TripsPage() {
             </Card>
             <Card>
               <CardContent className="py-3 px-4">
-                <p className="text-xs text-green-600">Fully Paid</p>
+                <p className="text-xs text-green-600">Collected</p>
                 <p className="text-lg font-bold text-green-700">{formatCurrency(summary.paidRevenue)}</p>
+              </CardContent>
+            </Card>
+            <Card className="col-span-2">
+              <CardContent className="py-3 px-4">
+                <p className="text-xs text-gray-600">Will not pay</p>
+                <p className="text-lg font-bold text-gray-700">{formatCurrency(summary.writtenOffRevenue)}</p>
               </CardContent>
             </Card>
           </div>
         )}
       </div>
 
-      <div className="hidden md:grid grid-cols-4 gap-3">
+      <div className="hidden md:grid grid-cols-5 gap-3">
         <Card>
           <CardContent className="py-3 px-4">
             <p className="text-xs text-gray-500">Trips</p>
@@ -1026,8 +1047,14 @@ export default function TripsPage() {
         </Card>
         <Card>
           <CardContent className="py-3 px-4">
-            <p className="text-xs text-gray-500">Total Revenue</p>
+            <p className="text-xs text-gray-500">Billed</p>
             <p className="text-xl font-bold text-green-600">{formatCurrency(summary.revenue)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-3 px-4">
+            <p className="text-xs text-green-600">Collected</p>
+            <p className="text-xl font-bold text-green-700">{formatCurrency(summary.paidRevenue)}</p>
           </CardContent>
         </Card>
         <Card>
@@ -1038,8 +1065,8 @@ export default function TripsPage() {
         </Card>
         <Card>
           <CardContent className="py-3 px-4">
-            <p className="text-xs text-green-600">Fully Paid</p>
-            <p className="text-xl font-bold text-green-700">{formatCurrency(summary.paidRevenue)}</p>
+            <p className="text-xs text-gray-600">Will not pay</p>
+            <p className="text-xl font-bold text-gray-700">{formatCurrency(summary.writtenOffRevenue)}</p>
           </CardContent>
         </Card>
       </div>
@@ -1349,7 +1376,9 @@ export default function TripsPage() {
                   <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.advance_paid || 0))}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] uppercase text-gray-500">Pending</p>
+                  <p className="text-[10px] uppercase text-gray-500">
+                    {isTripWrittenOff(viewingTrip.payment_status) ? 'Will not pay' : 'Pending'}
+                  </p>
                   <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.balance_due || 0))}</p>
                 </div>
                 {viewingTrip.payment_expected_date && (
@@ -1471,7 +1500,7 @@ export default function TripsPage() {
                   value={form.total_revenue || ''}
                   onChange={(e) => {
                     const total_revenue = Number(e.target.value);
-                    setForm((f) => withFullPendingAmounts({ ...f, total_revenue }, fullPending && f.payment_status === 'Pending'));
+                    setForm((f) => applyPaymentAmounts({ ...f, total_revenue }, fullPending));
                   }}
                   required
                 />
@@ -1485,13 +1514,16 @@ export default function TripsPage() {
                   value={form.advance_paid || ''}
                   onChange={(e) => {
                     const advance_paid = Number(e.target.value);
-                    setForm((f) => ({ ...f, advance_paid }));
+                    setForm((f) => {
+                      const next = { ...f, advance_paid };
+                      return f.payment_status === 'Will not pay' ? withWillNotPayAmounts(next) : next;
+                    });
                     if (fullPending && advance_paid !== 0) setFullPending(false);
                   }}
                 />
               </div>
               <div>
-                <Label>Balance Due</Label>
+                <Label>{form.payment_status === 'Will not pay' ? 'Amount not coming' : 'Balance Due'}</Label>
                 <Input
                   type="number"
                   step="0.01"
@@ -1516,6 +1548,9 @@ export default function TripsPage() {
                       if (payment_status === 'Fully Paid') {
                         return { ...f, payment_status, balance_due: 0, payment_expected_date: '' };
                       }
+                      if (payment_status === 'Will not pay') {
+                        return withWillNotPayAmounts({ ...f, payment_status, payment_expected_date: '' });
+                      }
                       return withFullPendingAmounts({ ...f, payment_status }, nextFullPending);
                     });
                   }}
@@ -1524,6 +1559,11 @@ export default function TripsPage() {
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
+                {form.payment_status === 'Will not pay' && (
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Remaining balance will not be collected. Any advance already received is kept.
+                  </p>
+                )}
               </div>
               {form.payment_status === 'Pending' && (
                 <>
@@ -1715,7 +1755,9 @@ export default function TripsPage() {
                           <p className="font-medium text-gray-800">{formatCurrency(Number(trip.advance_paid))}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] uppercase text-gray-500">Pending</p>
+                          <p className="text-[10px] uppercase text-gray-500">
+                            {isTripWrittenOff(trip.payment_status) ? 'Will not pay' : 'Pending'}
+                          </p>
                           <p className="font-medium text-gray-800">{formatCurrency(Number(trip.balance_due))}</p>
                         </div>
                         <div>

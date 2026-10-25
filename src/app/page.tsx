@@ -18,6 +18,7 @@ import { formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { readMonthParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
 import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
@@ -42,11 +43,33 @@ const COLORS = [
   '#14b8a6', '#e11d48', '#a855f7',
 ];
 
+function tripLogHref(
+  payment: string[],
+  opts: {
+    month: string;
+    currentMonth: string;
+    from: string;
+    dateTo: string;
+    vehicles: string[];
+  },
+) {
+  const params = new URLSearchParams();
+  params.set('payment', payment.join(','));
+  if (opts.month !== opts.currentMonth) params.set('month', opts.month);
+  if (!opts.month) {
+    if (opts.from) params.set('from', opts.from);
+    if (opts.dateTo) params.set('dateTo', opts.dateTo);
+  }
+  if (opts.vehicles.length > 0) params.set('vehicles', opts.vehicles.join(','));
+  return `/trips?${params.toString()}`;
+}
+
 const emptyStats: DashboardStats = {
   tripCount: 0,
   totalRevenue: 0,
   pendingRevenue: 0,
   collectedRevenue: 0,
+  writtenOffRevenue: 0,
   expenseCount: 0,
   totalExpenses: 0,
   jmTotal: 0,
@@ -305,25 +328,66 @@ export default function Dashboard() {
           <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
             <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Revenue</p>
             <p className="text-base sm:text-xl font-bold text-green-600 truncate">{formatCurrency(stats.totalRevenue)}</p>
-            <p className="text-[10px] sm:text-xs text-gray-400">{stats.tripCount} trips</p>
+            <p className="text-[10px] sm:text-xs text-gray-400">{stats.tripCount} trips · excluding will not pay</p>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
-            <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Amount Collected</p>
-            <p className="text-base sm:text-xl font-bold text-green-700 truncate">{formatCurrency(stats.collectedRevenue)}</p>
-            <p className="text-[10px] sm:text-xs text-gray-400">received from trips</p>
-          </CardContent>
-        </Card>
+        <Link
+          href={tripLogHref(['Fully Paid', 'Partial Pending', 'Will not pay'], {
+            month: filterMonth,
+            currentMonth,
+            from: filterDateFrom,
+            dateTo: filterDateTo,
+            vehicles: filterVehicles,
+          })}
+          className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
+        >
+          <Card className="h-full transition-colors hover:bg-green-50/80">
+            <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
+              <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Amount Collected</p>
+              <p className="text-base sm:text-xl font-bold text-green-700 truncate">{formatCurrency(stats.collectedRevenue)}</p>
+              <p className="text-[10px] sm:text-xs text-gray-400">view trips</p>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card>
-          <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
-            <p className="text-[10px] sm:text-xs text-amber-600 uppercase tracking-wide">Pending Payment</p>
-            <p className="text-base sm:text-xl font-bold text-amber-700 truncate">{formatCurrency(stats.pendingRevenue)}</p>
-            <p className="text-[10px] sm:text-xs text-gray-400">still due from trips</p>
-          </CardContent>
-        </Card>
+        <Link
+          href={tripLogHref(['Pending', 'Partial Pending'], {
+            month: filterMonth,
+            currentMonth,
+            from: filterDateFrom,
+            dateTo: filterDateTo,
+            vehicles: filterVehicles,
+          })}
+          className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+        >
+          <Card className="h-full transition-colors hover:bg-amber-50/80">
+            <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
+              <p className="text-[10px] sm:text-xs text-amber-600 uppercase tracking-wide">Pending Payment</p>
+              <p className="text-base sm:text-xl font-bold text-amber-700 truncate">{formatCurrency(stats.pendingRevenue)}</p>
+              <p className="text-[10px] sm:text-xs text-gray-400">view trips</p>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <Link
+          href={tripLogHref(['Will not pay'], {
+            month: filterMonth,
+            currentMonth,
+            from: filterDateFrom,
+            dateTo: filterDateTo,
+            vehicles: filterVehicles,
+          })}
+          className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+        >
+          <Card className="h-full transition-colors hover:bg-gray-50">
+            <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
+              <p className="text-[10px] sm:text-xs text-gray-600 uppercase tracking-wide">Will not pay</p>
+              <p className="text-base sm:text-xl font-bold text-gray-700 truncate">{formatCurrency(stats.writtenOffRevenue)}</p>
+              <p className="text-[10px] sm:text-xs text-gray-400">view trips</p>
+            </CardContent>
+          </Card>
+        </Link>
 
         <Card>
           <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
@@ -339,6 +403,7 @@ export default function Dashboard() {
             <p className={`text-base sm:text-xl font-bold truncate ${netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {formatCurrency(netProfit)}
             </p>
+            <p className="text-[10px] sm:text-xs text-gray-400">revenue − expenses</p>
           </CardContent>
         </Card>
 

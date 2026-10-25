@@ -2,12 +2,14 @@ import { supabase, EXPENSE_ADVANCE_CATEGORY } from '@/lib/supabase';
 import { getMonthDateRange } from '@/lib/format';
 import { applyInFilter, hasMultiValueFilters } from '@/lib/filter-helpers';
 import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS, TRIP_SEARCH_COLUMNS } from '@/lib/search';
+import { tripPaymentAmounts, tripRecognisedRevenue } from '@/lib/trip-payments';
 
 export type DashboardStats = {
   tripCount: number;
   totalRevenue: number;
   pendingRevenue: number;
   collectedRevenue: number;
+  writtenOffRevenue: number;
   expenseCount: number;
   totalExpenses: number;
   jmTotal: number;
@@ -54,6 +56,7 @@ function emptyStats(): DashboardStats {
     totalRevenue: 0,
     pendingRevenue: 0,
     collectedRevenue: 0,
+    writtenOffRevenue: 0,
     expenseCount: 0,
     totalExpenses: 0,
     jmTotal: 0,
@@ -72,33 +75,13 @@ function num(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-type TripPaymentRow = {
-  total_revenue: number;
-  payment_status: string;
-  advance_paid: number | null;
-  balance_due: number | null;
-};
-
-function tripPaymentAmounts(trips: TripPaymentRow[]) {
-  let pendingRevenue = 0;
-  let collectedRevenue = 0;
-  trips.forEach((t) => {
-    if (t.payment_status === 'Fully Paid') {
-      collectedRevenue += num(t.total_revenue);
-    } else {
-      pendingRevenue += num(t.balance_due);
-      collectedRevenue += num(t.advance_paid);
-    }
-  });
-  return { pendingRevenue, collectedRevenue };
-}
-
 function parseStats(raw: Record<string, unknown>): DashboardStats {
   return {
     tripCount: num(raw.tripCount),
     totalRevenue: num(raw.totalRevenue),
     pendingRevenue: num(raw.pendingRevenue),
     collectedRevenue: num(raw.collectedRevenue),
+    writtenOffRevenue: num(raw.writtenOffRevenue),
     expenseCount: num(raw.expenseCount),
     totalExpenses: num(raw.totalExpenses),
     jmTotal: num(raw.jmTotal),
@@ -186,17 +169,45 @@ function applyDashboardExpenseFilters<Q>(query: Q, filters: DashboardFilterParam
 
 function tripPaymentQuery(filters: DashboardFilterParams) {
   return applyDashboardTripFilters(
-    supabase.from('trips').select('total_revenue, payment_status, advance_paid, balance_due'),
+    supabase.from('trips').select('date, total_revenue, payment_status, advance_paid, balance_due'),
     filters,
   );
 }
 
+function recognisedDailyTrips(trips: { date: string; payment_status: string; total_revenue?: number | null; advance_paid?: number | null }[]) {
+  const dailyTripMap: Record<string, number> = {};
+  trips.forEach((t) => {
+    dailyTripMap[t.date] = (dailyTripMap[t.date] || 0) + tripRecognisedRevenue(t);
+  });
+  return Object.entries(dailyTripMap).map(([date, revenue]) => ({ date, revenue }));
+}
+
 async function fetchTripPaymentAmounts(
   filters: DashboardFilterParams,
-): Promise<{ pendingRevenue: number; collectedRevenue: number; error: string | null }> {
+): Promise<{
+  pendingRevenue: number;
+  collectedRevenue: number;
+  writtenOffRevenue: number;
+  revenue: number;
+  dailyTrips: { date: string; revenue: number }[];
+  error: string | null;
+}> {
+  const empty = {
+    pendingRevenue: 0,
+    collectedRevenue: 0,
+    writtenOffRevenue: 0,
+    revenue: 0,
+    dailyTrips: [] as { date: string; revenue: number }[],
+    error: null as string | null,
+  };
   const { data, error } = await tripPaymentQuery(filters);
-  if (error) return { pendingRevenue: 0, collectedRevenue: 0, error: error.message };
-  return { ...tripPaymentAmounts((data || []) as TripPaymentRow[]), error: null };
+  if (error) return { ...empty, error: error.message };
+  const rows = data || [];
+  return {
+    ...tripPaymentAmounts(rows),
+    dailyTrips: recognisedDailyTrips(rows),
+    error: null,
+  };
 }
 
 /** Fallback when dashboard_stats RPC is not deployed — fetches slim columns only */
@@ -232,7 +243,13 @@ async function fetchDashboardStatsFallback(
   if (tripError) return { data: null, error: tripError.message };
   if (expError) return { data: null, error: expError.message };
 
-  const trips = (tripRows || []) as ({ date: string } & TripPaymentRow)[];
+  const trips = (tripRows || []) as {
+    date: string;
+    total_revenue: number;
+    payment_status: string;
+    advance_paid: number | null;
+    balance_due: number | null;
+  }[];
   const expenses = (expenseRows || []) as {
     date: string;
     amount: number;
@@ -242,13 +259,11 @@ async function fetchDashboardStatsFallback(
     vehicle_number: string | null;
   }[];
 
-  const dailyTripMap: Record<string, number> = {};
-  let totalRevenue = 0;
-  trips.forEach((t) => {
-    totalRevenue += num(t.total_revenue);
-    dailyTripMap[t.date] = (dailyTripMap[t.date] || 0) + num(t.total_revenue);
-  });
-  const { pendingRevenue, collectedRevenue } = tripPaymentAmounts(trips);
+  const payments = tripPaymentAmounts(trips);
+  const pendingRevenue = payments.pendingRevenue;
+  const collectedRevenue = payments.collectedRevenue;
+  const writtenOffRevenue = payments.writtenOffRevenue;
+  const totalRevenue = payments.revenue;
 
   const dailyExpMap: Record<string, number> = {};
   const catMap: Record<string, number> = {};
@@ -286,13 +301,14 @@ async function fetchDashboardStatsFallback(
       totalRevenue,
       pendingRevenue,
       collectedRevenue,
+      writtenOffRevenue,
       expenseCount: expenseCount ?? 0,
       totalExpenses,
       jmTotal,
       maheshTotal,
       totalCapitalIn: (capitalRows || []).reduce((s, r) => s + num(r.value), 0),
       cashAvailable: allRevenue - allExpFromRevenue - capPaidFromRevenue,
-      dailyTrips: Object.entries(dailyTripMap).map(([date, revenue]) => ({ date, revenue })),
+      dailyTrips: recognisedDailyTrips(trips),
       dailyExpenses: Object.entries(dailyExpMap).map(([date, expenses]) => ({ date, expenses })),
       categoryBreakdown: Object.entries(catMap)
         .map(([name, value]) => ({ name, value }))
@@ -339,8 +355,11 @@ export async function fetchDashboardStats(
       return {
         data: {
           ...stats,
+          totalRevenue: payments.revenue,
           pendingRevenue: payments.pendingRevenue,
           collectedRevenue: payments.collectedRevenue,
+          writtenOffRevenue: payments.writtenOffRevenue,
+          dailyTrips: payments.dailyTrips,
         },
         error: null,
       };

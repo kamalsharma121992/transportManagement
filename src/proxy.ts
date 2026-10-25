@@ -1,11 +1,15 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { pageKeyForPath, homeForPages, sessionCanOpen } from '@/lib/auth/pages';
+import { authorizationMatchesBackupSecret } from '@/lib/backup-auth';
 import { SESSION_COOKIE, verifySession } from '@/lib/auth/token';
 
 const OPEN_PATHS = new Set(['/login', '/api/auth/login']);
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  if (pathname === '/api/backup' && authorizationMatchesBackupSecret(request.headers.get('authorization'))) {
+    return NextResponse.next();
+  }
   if (OPEN_PATHS.has(pathname)) {
     const session = await verifySession(request.cookies.get(SESSION_COOKIE)?.value);
     if (pathname === '/login' && session) {
