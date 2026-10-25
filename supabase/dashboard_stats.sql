@@ -1,5 +1,12 @@
--- Run this in Supabase SQL Editor to enable optimized dashboard stats
--- (Also appended to supabase/schema.sql for new installs)
+-- Migration: dashboard_stats (pending + collected trip payments)
+-- Safe to re-run (CREATE OR REPLACE).
+--
+-- Apply with:
+--   npm run migrate
+--   npm run migrate -- supabase/dashboard_stats.sql
+-- Or paste this file into Supabase → SQL Editor → Run.
+--
+-- Also appended to supabase/schema.sql for new installs.
 
 CREATE OR REPLACE FUNCTION public.dashboard_stats(
   p_date_from date DEFAULT NULL,
@@ -21,6 +28,8 @@ AS $$
 DECLARE
   trip_count bigint;
   trip_revenue numeric;
+  pending_revenue numeric;
+  collected_revenue numeric;
   exp_count bigint;
   exp_total numeric;
   jm_total numeric;
@@ -41,8 +50,11 @@ BEGIN
     ELSE '%' || replace(replace(replace(btrim(p_exp_search), '\', '\\'), '%', '\%'), '_', '\_') || '%'
   END;
 
-  SELECT count(*)::bigint, coalesce(sum(total_revenue), 0)
-  INTO trip_count, trip_revenue
+  SELECT count(*)::bigint,
+         coalesce(sum(total_revenue), 0),
+         coalesce(sum(CASE WHEN payment_status IS DISTINCT FROM 'Fully Paid' THEN coalesce(balance_due, 0) ELSE 0 END), 0),
+         coalesce(sum(CASE WHEN payment_status = 'Fully Paid' THEN total_revenue ELSE coalesce(advance_paid, 0) END), 0)
+  INTO trip_count, trip_revenue, pending_revenue, collected_revenue
   FROM trips t
   WHERE (p_date_from IS NULL OR t.date >= p_date_from)
     AND (p_date_to IS NULL OR t.date <= p_date_to)
@@ -93,6 +105,8 @@ BEGIN
   RETURN jsonb_build_object(
     'tripCount', trip_count,
     'totalRevenue', trip_revenue,
+    'pendingRevenue', pending_revenue,
+    'collectedRevenue', collected_revenue,
     'expenseCount', exp_count,
     'totalExpenses', exp_total,
     'jmTotal', jm_total,

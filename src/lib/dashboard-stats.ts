@@ -6,6 +6,8 @@ import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS, TRIP_SEARCH_COLUMNS } fr
 export type DashboardStats = {
   tripCount: number;
   totalRevenue: number;
+  pendingRevenue: number;
+  collectedRevenue: number;
   expenseCount: number;
   totalExpenses: number;
   jmTotal: number;
@@ -50,6 +52,8 @@ function emptyStats(): DashboardStats {
   return {
     tripCount: 0,
     totalRevenue: 0,
+    pendingRevenue: 0,
+    collectedRevenue: 0,
     expenseCount: 0,
     totalExpenses: 0,
     jmTotal: 0,
@@ -64,13 +68,37 @@ function emptyStats(): DashboardStats {
 }
 
 function num(v: unknown): number {
-  return Number(v) || 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+type TripPaymentRow = {
+  total_revenue: number;
+  payment_status: string;
+  advance_paid: number | null;
+  balance_due: number | null;
+};
+
+function tripPaymentAmounts(trips: TripPaymentRow[]) {
+  let pendingRevenue = 0;
+  let collectedRevenue = 0;
+  trips.forEach((t) => {
+    if (t.payment_status === 'Fully Paid') {
+      collectedRevenue += num(t.total_revenue);
+    } else {
+      pendingRevenue += num(t.balance_due);
+      collectedRevenue += num(t.advance_paid);
+    }
+  });
+  return { pendingRevenue, collectedRevenue };
 }
 
 function parseStats(raw: Record<string, unknown>): DashboardStats {
   return {
     tripCount: num(raw.tripCount),
     totalRevenue: num(raw.totalRevenue),
+    pendingRevenue: num(raw.pendingRevenue),
+    collectedRevenue: num(raw.collectedRevenue),
     expenseCount: num(raw.expenseCount),
     totalExpenses: num(raw.totalExpenses),
     jmTotal: num(raw.jmTotal),
@@ -122,46 +150,53 @@ export function mergeDailySeries(
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function buildTripFilterQuery(filters: DashboardFilterParams) {
-  type Q = {
-    gte: (col: string, val: string) => Q;
-    lte: (col: string, val: string) => Q;
-    eq: (col: string, val: string) => Q;
-    in: (col: string, vals: string[]) => Q;
-    or: (filter: string) => Q;
-    select: (cols: string, opts?: { count?: 'exact'; head?: boolean }) => Promise<{ count: number | null; data: unknown; error: { message: string } | null }>;
-  };
-  let q = supabase.from('trips') as unknown as Q;
-  if (filters.dateFrom) q = q.gte('date', filters.dateFrom);
-  if (filters.dateTo) q = q.lte('date', filters.dateTo);
-  q = applyInFilter(q, 'vehicle_number', filters.tripVehicles);
+type FilterableQuery = {
+  gte: (col: string, val: string) => FilterableQuery;
+  lte: (col: string, val: string) => FilterableQuery;
+  eq: (col: string, val: string) => FilterableQuery;
+  neq: (col: string, val: string) => FilterableQuery;
+  in: (col: string, vals: string[]) => FilterableQuery;
+  or: (filter: string) => FilterableQuery;
+};
+
+function applyDashboardTripFilters<Q>(query: Q, filters: DashboardFilterParams): Q {
+  let q = query as Q & FilterableQuery;
+  if (filters.dateFrom) q = q.gte('date', filters.dateFrom) as typeof q;
+  if (filters.dateTo) q = q.lte('date', filters.dateTo) as typeof q;
+  q = applyInFilter(q, 'vehicle_number', filters.tripVehicles) as typeof q;
   const searchFilter = buildTextSearchFilter([...TRIP_SEARCH_COLUMNS], filters.tripSearch || '');
-  if (searchFilter) q = q.or(searchFilter);
-  return q;
+  if (searchFilter) q = q.or(searchFilter) as typeof q;
+  return q as Q;
 }
 
-function buildExpenseFilterQuery(filters: DashboardFilterParams) {
-  type Q = {
-    gte: (col: string, val: string) => Q;
-    lte: (col: string, val: string) => Q;
-    eq: (col: string, val: string) => Q;
-    neq: (col: string, val: string) => Q;
-    in: (col: string, vals: string[]) => Q;
-    or: (filter: string) => Q;
-    select: (cols: string, opts?: { count?: 'exact'; head?: boolean }) => Promise<{ count: number | null; data: unknown; error: { message: string } | null }>;
-  };
-  let q = supabase.from('expenses') as unknown as Q;
-  q = q.neq('category', EXPENSE_ADVANCE_CATEGORY);
-  if (filters.dateFrom) q = q.gte('date', filters.dateFrom);
-  if (filters.dateTo) q = q.lte('date', filters.dateTo);
-  q = applyInFilter(q, 'paid_by', filters.expPaidBy);
-  q = applyInFilter(q, 'paid_by_person', filters.expPaidByPerson);
-  q = applyInFilter(q, 'person', filters.expPerson);
-  q = applyInFilter(q, 'vehicle_number', filters.expVehicles);
-  q = applyInFilter(q, 'payment_source', filters.expPaymentSources);
+function applyDashboardExpenseFilters<Q>(query: Q, filters: DashboardFilterParams): Q {
+  let q = query as Q & FilterableQuery;
+  q = q.neq('category', EXPENSE_ADVANCE_CATEGORY) as typeof q;
+  if (filters.dateFrom) q = q.gte('date', filters.dateFrom) as typeof q;
+  if (filters.dateTo) q = q.lte('date', filters.dateTo) as typeof q;
+  q = applyInFilter(q, 'paid_by', filters.expPaidBy) as typeof q;
+  q = applyInFilter(q, 'paid_by_person', filters.expPaidByPerson) as typeof q;
+  q = applyInFilter(q, 'person', filters.expPerson) as typeof q;
+  q = applyInFilter(q, 'vehicle_number', filters.expVehicles) as typeof q;
+  q = applyInFilter(q, 'payment_source', filters.expPaymentSources) as typeof q;
   const searchFilter = buildTextSearchFilter([...EXPENSE_SEARCH_COLUMNS], filters.expSearch || '');
-  if (searchFilter) q = q.or(searchFilter);
-  return q;
+  if (searchFilter) q = q.or(searchFilter) as typeof q;
+  return q as Q;
+}
+
+function tripPaymentQuery(filters: DashboardFilterParams) {
+  return applyDashboardTripFilters(
+    supabase.from('trips').select('total_revenue, payment_status, advance_paid, balance_due'),
+    filters,
+  );
+}
+
+async function fetchTripPaymentAmounts(
+  filters: DashboardFilterParams,
+): Promise<{ pendingRevenue: number; collectedRevenue: number; error: string | null }> {
+  const { data, error } = await tripPaymentQuery(filters);
+  if (error) return { pendingRevenue: 0, collectedRevenue: 0, error: error.message };
+  return { ...tripPaymentAmounts((data || []) as TripPaymentRow[]), error: null };
 }
 
 /** Fallback when dashboard_stats RPC is not deployed — fetches slim columns only */
@@ -178,10 +213,16 @@ async function fetchDashboardStatsFallback(
     { data: allExpRevenue },
     { data: capPaidRows },
   ] = await Promise.all([
-    buildTripFilterQuery(filters).select('*', { count: 'exact', head: true }),
-    buildTripFilterQuery(filters).select('date, total_revenue'),
-    buildExpenseFilterQuery(filters).select('*', { count: 'exact', head: true }),
-    buildExpenseFilterQuery(filters).select('date, amount, category, paid_by, expense_type, vehicle_number'),
+    applyDashboardTripFilters(supabase.from('trips').select('*', { count: 'exact', head: true }), filters),
+    applyDashboardTripFilters(
+      supabase.from('trips').select('date, total_revenue, payment_status, advance_paid, balance_due'),
+      filters,
+    ),
+    applyDashboardExpenseFilters(supabase.from('expenses').select('*', { count: 'exact', head: true }), filters),
+    applyDashboardExpenseFilters(
+      supabase.from('expenses').select('date, amount, category, paid_by, expense_type, vehicle_number'),
+      filters,
+    ),
     supabase.from('capital_contributions').select('value'),
     supabase.from('trips').select('total_revenue, payment_status, advance_paid'),
     supabase.from('expenses').select('amount, payment_source, category').neq('category', EXPENSE_ADVANCE_CATEGORY),
@@ -191,7 +232,7 @@ async function fetchDashboardStatsFallback(
   if (tripError) return { data: null, error: tripError.message };
   if (expError) return { data: null, error: expError.message };
 
-  const trips = (tripRows || []) as { date: string; total_revenue: number }[];
+  const trips = (tripRows || []) as ({ date: string } & TripPaymentRow)[];
   const expenses = (expenseRows || []) as {
     date: string;
     amount: number;
@@ -207,6 +248,7 @@ async function fetchDashboardStatsFallback(
     totalRevenue += num(t.total_revenue);
     dailyTripMap[t.date] = (dailyTripMap[t.date] || 0) + num(t.total_revenue);
   });
+  const { pendingRevenue, collectedRevenue } = tripPaymentAmounts(trips);
 
   const dailyExpMap: Record<string, number> = {};
   const catMap: Record<string, number> = {};
@@ -242,6 +284,8 @@ async function fetchDashboardStatsFallback(
     data: {
       tripCount: tripCount ?? 0,
       totalRevenue,
+      pendingRevenue,
+      collectedRevenue,
       expenseCount: expenseCount ?? 0,
       totalExpenses,
       jmTotal,
@@ -289,7 +333,17 @@ export async function fetchDashboardStats(
     });
 
     if (!error && data) {
-      return { data: parseStats(data as Record<string, unknown>), error: null };
+      const stats = parseStats(data as Record<string, unknown>);
+      const payments = await fetchTripPaymentAmounts(filters);
+      if (payments.error) return { data: null, error: payments.error };
+      return {
+        data: {
+          ...stats,
+          pendingRevenue: payments.pendingRevenue,
+          collectedRevenue: payments.collectedRevenue,
+        },
+        error: null,
+      };
     }
     if (error && !error.message.includes('dashboard_stats') && !error.message.includes('schema cache')) {
       return { data: null, error: error.message };

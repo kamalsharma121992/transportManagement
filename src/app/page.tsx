@@ -45,6 +45,8 @@ const COLORS = [
 const emptyStats: DashboardStats = {
   tripCount: 0,
   totalRevenue: 0,
+  pendingRevenue: 0,
+  collectedRevenue: 0,
   expenseCount: 0,
   totalExpenses: 0,
   jmTotal: 0,
@@ -160,26 +162,30 @@ export default function Dashboard() {
         setLoading(true);
       }
 
-      const { dateFrom, dateTo } = getDashboardDateRange(filterMonth, filterDateFrom, filterDateTo);
-      const { data, error } = await fetchDashboardStats({
-        dateFrom,
-        dateTo,
-        tripVehicles: filterVehicles,
-        tripSearch: searchQuery || null,
-        expPaidBy: filterPaidByEntities,
-        expPaidByPerson: filterPaidByPersons,
-        expPerson: filterPersons,
-        expVehicles: filterVehicles,
-        expPaymentSources: filterPaymentSources,
-        expSearch: searchQuery || null,
-      });
+      try {
+        const { dateFrom, dateTo } = getDashboardDateRange(filterMonth, filterDateFrom, filterDateTo);
+        const { data, error } = await fetchDashboardStats({
+          dateFrom,
+          dateTo,
+          tripVehicles: filterVehicles,
+          tripSearch: searchQuery || null,
+          expPaidBy: filterPaidByEntities,
+          expPaidByPerson: filterPaidByPersons,
+          expPerson: filterPersons,
+          expVehicles: filterVehicles,
+          expPaymentSources: filterPaymentSources,
+          expSearch: searchQuery || null,
+        });
 
-      if (error) toast.error('Failed to load dashboard: ' + error);
-      else setStats(data || emptyStats);
-
-      hasLoadedRef.current = true;
-      setLoading(false);
-      setRefreshing(false);
+        if (error) toast.error('Failed to load dashboard: ' + error);
+        else setStats({ ...emptyStats, ...(data || {}) });
+      } catch (err) {
+        toast.error('Failed to load dashboard: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      } finally {
+        hasLoadedRef.current = true;
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
 
     loadStats();
@@ -294,12 +300,28 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
         <Card>
           <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
             <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Revenue</p>
             <p className="text-base sm:text-xl font-bold text-green-600 truncate">{formatCurrency(stats.totalRevenue)}</p>
             <p className="text-[10px] sm:text-xs text-gray-400">{stats.tripCount} trips</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
+            <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide">Amount Collected</p>
+            <p className="text-base sm:text-xl font-bold text-green-700 truncate">{formatCurrency(stats.collectedRevenue)}</p>
+            <p className="text-[10px] sm:text-xs text-gray-400">received from trips</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="py-3 px-3 sm:py-4 sm:px-4">
+            <p className="text-[10px] sm:text-xs text-amber-600 uppercase tracking-wide">Pending Payment</p>
+            <p className="text-base sm:text-xl font-bold text-amber-700 truncate">{formatCurrency(stats.pendingRevenue)}</p>
+            <p className="text-[10px] sm:text-xs text-gray-400">still due from trips</p>
           </CardContent>
         </Card>
 
@@ -326,7 +348,7 @@ export default function Dashboard() {
             <p className={`text-base sm:text-xl font-bold truncate ${stats.cashAvailable >= 0 ? 'text-green-700' : 'text-red-700'}`}>
               {formatCurrency(stats.cashAvailable)}
             </p>
-            <p className="text-[10px] sm:text-xs text-gray-400">collected payments</p>
+            <p className="text-[10px] sm:text-xs text-gray-400">after expenses</p>
           </CardContent>
         </Card>
       </div>
