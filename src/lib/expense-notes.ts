@@ -20,7 +20,7 @@ export async function fetchExpenseNotes(expenseId: number): Promise<{ data: Expe
 
   if (error) {
     if (error.message.includes('expense_notes') || error.message.includes('schema cache')) {
-      return { data: [], error: 'Run supabase/expense_notes.sql (or ./migrate.sh) to enable expense notes.' };
+      return { data: [], error: 'Run supabase/expense_notes.sql (or ./migrate.sh) to enable descriptions.' };
     }
     return { data: [], error: error.message };
   }
@@ -33,7 +33,7 @@ export async function addExpenseNote(
   createdBy: string,
 ): Promise<{ data: ExpenseNote | null; error: string | null }> {
   const text = note.trim();
-  if (!text) return { data: null, error: 'Note cannot be empty' };
+  if (!text) return { data: null, error: 'Description cannot be empty' };
 
   const { data, error } = await getSupabase()
     .from('expense_notes')
@@ -55,7 +55,7 @@ export async function updateExpenseNote(
   updatedBy: string,
 ): Promise<{ data: ExpenseNote | null; error: string | null }> {
   const text = note.trim();
-  if (!text) return { data: null, error: 'Note cannot be empty' };
+  if (!text) return { data: null, error: 'Description cannot be empty' };
 
   const { data, error } = await getSupabase()
     .from('expense_notes')

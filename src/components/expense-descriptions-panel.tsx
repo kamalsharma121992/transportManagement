@@ -18,10 +18,10 @@ import {
 } from '@/lib/expense-notes';
 import { cn } from '@/lib/utils';
 
-async function syncExpenseNotesPreview(expenseId: number, latestNote: string | null) {
+async function syncDescriptionPreview(expenseId: number, latest: string | null) {
   await getSupabase()
     .from('expenses')
-    .update({ notes: latestNote })
+    .update({ description: latest })
     .eq('id', expenseId);
 }
 
@@ -39,7 +39,7 @@ function formatWhen(iso: string) {
   }
 }
 
-export function ExpenseNotesPanel({
+export function ExpenseDescriptionsPanel({
   expenseId,
   className,
   listClassName,
@@ -51,7 +51,7 @@ export function ExpenseNotesPanel({
   const session = useSession();
   const actor = session?.name || session?.username || 'Unknown';
 
-  const [notes, setNotes] = useState<ExpenseNote[]>([]);
+  const [items, setItems] = useState<ExpenseNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -62,7 +62,7 @@ export function ExpenseNotesPanel({
   async function load() {
     setLoading(true);
     const { data, error: err } = await fetchExpenseNotes(expenseId);
-    setNotes(data);
+    setItems(data);
     setError(err);
     setLoading(false);
   }
@@ -81,14 +81,14 @@ export function ExpenseNotesPanel({
       return;
     }
     if (data) {
-      setNotes((prev) => {
+      setItems((prev) => {
         const next = [data, ...prev];
-        void syncExpenseNotesPreview(expenseId, next[0]?.note || null);
+        void syncDescriptionPreview(expenseId, next[0]?.note || null);
         return next;
       });
       setDraft('');
-      recordAudit('add', 'Expenses', `Added note on expense #${expenseId}`, { type: 'expense', id: expenseId });
-      toast.success('Note added');
+      recordAudit('add', 'Expenses', `Added description on expense #${expenseId}`, { type: 'expense', id: expenseId });
+      toast.success('Description added');
     }
   }
 
@@ -102,21 +102,25 @@ export function ExpenseNotesPanel({
       return;
     }
     if (data) {
-      setNotes((prev) => {
+      setItems((prev) => {
         const next = prev.map((n) => (n.id === noteId ? data : n));
-        void syncExpenseNotesPreview(expenseId, next[0]?.note || null);
+        const latest = next.slice().sort((a, b) => {
+          const t = b.created_at.localeCompare(a.created_at);
+          return t !== 0 ? t : b.id - a.id;
+        })[0];
+        void syncDescriptionPreview(expenseId, latest?.note || null);
         return next;
       });
       setEditingId(null);
       setEditDraft('');
-      recordAudit('edit', 'Expenses', `Updated note on expense #${expenseId}`, { type: 'expense', id: expenseId });
-      toast.success('Note updated');
+      recordAudit('edit', 'Expenses', `Updated description on expense #${expenseId}`, { type: 'expense', id: expenseId });
+      toast.success('Description updated');
     }
   }
 
   async function handleDelete(noteId: number) {
     if (!(await confirmAction({
-      title: 'Delete this note?',
+      title: 'Delete this description?',
       description: 'This cannot be undone.',
       confirmLabel: 'Delete',
       variant: 'destructive',
@@ -128,28 +132,28 @@ export function ExpenseNotesPanel({
       toast.error(err);
       return;
     }
-    setNotes((prev) => {
+    setItems((prev) => {
       const next = prev.filter((n) => n.id !== noteId);
-      void syncExpenseNotesPreview(expenseId, next[0]?.note || null);
+      void syncDescriptionPreview(expenseId, next[0]?.note || null);
       return next;
     });
     if (editingId === noteId) {
       setEditingId(null);
       setEditDraft('');
     }
-    recordAudit('delete', 'Expenses', `Deleted note on expense #${expenseId}`, { type: 'expense', id: expenseId });
-    toast.success('Note deleted');
+    recordAudit('delete', 'Expenses', `Deleted description on expense #${expenseId}`, { type: 'expense', id: expenseId });
+    toast.success('Description deleted');
   }
 
   return (
     <div className={cn('space-y-3', className)}>
-      <p className="text-[10px] uppercase tracking-wide text-gray-500">Notes</p>
+      <p className="text-[10px] uppercase tracking-wide text-gray-500">Descriptions</p>
 
       <div className="space-y-2">
-        <Label className="sr-only">Add note</Label>
+        <Label className="sr-only">Add description</Label>
         <textarea
           className="min-h-[72px] w-full rounded-md border px-3 py-2 text-sm"
-          placeholder="Add a note..."
+          placeholder="Add a description..."
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           disabled={saving}
@@ -164,22 +168,22 @@ export function ExpenseNotesPanel({
           {saving && !editingId ? (
             <><Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> Saving...</>
           ) : (
-            <><Plus className="mr-1 h-3.5 w-3.5" /> Add note</>
+            <><Plus className="mr-1 h-3.5 w-3.5" /> Add description</>
           )}
         </Button>
       </div>
 
       {loading ? (
         <div className="flex items-center gap-2 py-2 text-sm text-gray-500">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading notes...
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading descriptions...
         </div>
       ) : error ? (
         <p className="text-sm text-amber-700">{error}</p>
-      ) : notes.length === 0 ? (
-        <p className="text-sm text-gray-500">No notes yet.</p>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-gray-500">No descriptions yet.</p>
       ) : (
         <ul className={cn('max-h-56 space-y-2 overflow-y-auto', listClassName)}>
-          {notes.map((n) => (
+          {items.map((n) => (
             <li key={n.id} className="rounded-md border bg-gray-50 px-3 py-2 text-sm">
               {editingId === n.id ? (
                 <div className="space-y-2">
@@ -235,7 +239,7 @@ export function ExpenseNotesPanel({
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7"
-                        title="Edit note"
+                        title="Edit description"
                         disabled={saving}
                         onClick={() => { setEditingId(n.id); setEditDraft(n.note); }}
                       >
@@ -246,7 +250,7 @@ export function ExpenseNotesPanel({
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7"
-                        title="Delete note"
+                        title="Delete description"
                         disabled={saving}
                         onClick={() => void handleDelete(n.id)}
                       >

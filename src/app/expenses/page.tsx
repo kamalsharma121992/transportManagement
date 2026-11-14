@@ -50,7 +50,7 @@ import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { recordAudit } from '@/lib/audit-client';
 import { EntityAuditHistory } from '@/components/entity-audit-history';
-import { ExpenseNotesPanel } from '@/components/expense-notes-panel';
+import { ExpenseDescriptionsPanel } from '@/components/expense-descriptions-panel';
 import { confirmAction } from '@/components/confirm-dialog';
 import { addExpenseNote } from '@/lib/expense-notes';
 import { useSession } from '@/components/session-provider';
@@ -76,7 +76,6 @@ const emptyForm = {
   payment_mode: 'Cash',
   credit_card_id: '',
   card_details: '',
-  notes: '',
 };
 
 function capitalResultMessage(
@@ -590,11 +589,12 @@ export default function ExpensesPage() {
       toast.error('Person is required for Expense Advance (who received the cash)');
       return;
     }
-    const { payment_mode, card_details, credit_card_id, notes, ...rest } = form;
+    const { payment_mode, card_details, credit_card_id, description, ...rest } = form;
     const cardId = credit_card_id ? Number(credit_card_id) : null;
     const selectedCard = creditCards.find((c) => c.id === cardId);
     const cardHolder = cardHolderForSource(form.payment_source, form.paid_by_person);
     const cardsForHolder = filterCardsByHolder(creditCards, cardHolder).filter((card) => card.is_active);
+    const firstDescription = description.trim();
 
     if (
       form.payment_source !== 'Revenue'
@@ -622,14 +622,16 @@ export default function ExpensesPage() {
       card_id: useCard ? cardId : null,
       image_urls: expenseImageUrls,
       image_url: expenseImageUrls[0] || null,
-      // Notes timeline owns this field after create; only set on insert
-      ...(editingId ? {} : { notes: notes.trim() || null }),
+      // Descriptions timeline owns this after create; only set on insert
+      ...(editingId ? {} : { description: firstDescription || null }),
     };
     const capitalInput: ExpenseCapitalInput = {
       date: form.date,
       amount: Number(form.amount),
       category: form.category,
-      description: form.description || null,
+      description: editingId
+        ? (expenses.find((row) => row.id === editingId)?.description || null)
+        : (firstDescription || null),
       paymentSource: form.payment_source,
       paidByPerson: form.paid_by_person || null,
       paymentMode: payment_mode,
@@ -662,7 +664,7 @@ export default function ExpensesPage() {
               date: form.date,
               amount: Number(form.amount),
               person: form.person,
-              description: form.description || null,
+              description: expenses.find((row) => row.id === editingId)?.description || null,
             });
           } catch (syncErr) {
             toast.error(syncErr instanceof Error ? syncErr.message : 'Expense saved but expense advance sync failed');
@@ -710,7 +712,7 @@ export default function ExpensesPage() {
               date: form.date,
               amount: Number(form.amount),
               person: form.person,
-              description: form.description || null,
+              description: firstDescription || null,
             });
             toast.success('Expense Advance added — track settlement under Expense Advances');
             recordAudit(
@@ -742,11 +744,11 @@ export default function ExpensesPage() {
           recordAudit('add', 'Expenses', expenseAuditSummary('Added', form.category, Number(form.amount), form.date, ''));
         }
 
-        if (inserted?.id && notes.trim()) {
+        if (inserted?.id && firstDescription) {
           const actor = session?.name || session?.username || 'Unknown';
-          const noteResult = await addExpenseNote(inserted.id, notes, actor);
-          if (noteResult.error) toast.error('Expense saved but note failed: ' + noteResult.error);
-          else recordAudit('add', 'Expenses', `Added note on expense #${inserted.id}`, { type: 'expense', id: inserted.id });
+          const noteResult = await addExpenseNote(inserted.id, firstDescription, actor);
+          if (noteResult.error) toast.error('Expense saved but description failed: ' + noteResult.error);
+          else recordAudit('add', 'Expenses', `Added description on expense #${inserted.id}`, { type: 'expense', id: inserted.id });
         }
       }
       closeExpenseDialog();
@@ -769,7 +771,7 @@ export default function ExpensesPage() {
       vehicle_number: exp.vehicle_number || '',
       category: exp.category,
       amount: Number(exp.amount),
-      description: exp.description || '',
+      description: '',
       person: exp.person || '',
       paid_by_person: exp.paid_by_person || '',
       bill_receipt_ref: exp.bill_receipt_ref || '',
@@ -781,7 +783,6 @@ export default function ExpensesPage() {
         : paymentModeForCategory(exp.category),
       credit_card_id: exp.card_id ? String(exp.card_id) : '',
       card_details: '',
-      notes: '',
     });
     setDialogOpen(true);
   }
@@ -840,7 +841,7 @@ export default function ExpensesPage() {
         search={{
           value: searchInput,
           onChange: setSearchInput,
-          placeholder: 'Search description, category, vehicle, notes...',
+          placeholder: 'Search description, category, vehicle...',
         }}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
@@ -910,7 +911,7 @@ export default function ExpensesPage() {
               <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:px-5">
                 <DialogTitle>{editingId ? 'Edit Expense' : 'New Expense'}</DialogTitle>
                 <p className="text-sm text-gray-500">
-                  {editingId ? 'Update expense details, payment, and notes' : 'Add a new expense'}
+                  {editingId ? 'Update expense details, payment, and descriptions' : 'Add a new expense'}
                 </p>
               </DialogHeader>
 
@@ -957,10 +958,6 @@ export default function ExpensesPage() {
                     <div>
                       <Label>Amount ({'\u20B9'})</Label>
                       <Input type="number" step="0.01" value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} required />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <Label>Description</Label>
-                      <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
                     </div>
                   </div>
                 </section>
@@ -1093,11 +1090,11 @@ export default function ExpensesPage() {
 
                 {!editingId && (
                   <section className="space-y-3 border-t pt-5">
-                    <Label>First note (optional)</Label>
+                    <Label>First description (optional)</Label>
                     <Input
-                      value={form.notes}
-                      onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                      placeholder="Saved as the first note after the expense is created"
+                      value={form.description}
+                      onChange={(e) => setForm({ ...form, description: e.target.value })}
+                      placeholder="Saved as the first description after the expense is created"
                     />
                   </section>
                 )}
@@ -1106,7 +1103,7 @@ export default function ExpensesPage() {
               {editingId ? (
                 <aside className="flex max-h-[40vh] min-h-0 w-full shrink-0 flex-col border-t bg-gray-50/60 md:max-h-none md:w-[18.5rem] md:border-t-0 md:border-l lg:w-80">
                   <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-                    <ExpenseNotesPanel expenseId={editingId} listClassName="max-h-none" />
+                    <ExpenseDescriptionsPanel expenseId={editingId} listClassName="max-h-none" />
                   </div>
                 </aside>
               ) : null}
@@ -1189,11 +1186,6 @@ export default function ExpensesPage() {
                       </div>
                     </section>
 
-                    <section>
-                      <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-gray-500">Description</p>
-                      <p className="whitespace-pre-wrap text-sm text-gray-800">{viewingExpense.description || '—'}</p>
-                    </section>
-
                     {expenseImageList(viewingExpense).length > 0 && (
                       <section>
                         <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-gray-500">
@@ -1218,7 +1210,7 @@ export default function ExpensesPage() {
 
                   <aside className="flex max-h-[45vh] min-h-0 w-full shrink-0 flex-col border-t bg-gray-50/60 md:max-h-none md:w-[18.5rem] md:border-t-0 md:border-l lg:w-80">
                     <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-                      <ExpenseNotesPanel
+                      <ExpenseDescriptionsPanel
                         expenseId={viewingExpense.id}
                         listClassName="max-h-none"
                       />
