@@ -65,6 +65,7 @@ import { MultiImageField } from '@/components/multi-image-field';
 import { useSession, useSessionReady } from '@/components/session-provider';
 import { recordAudit } from '@/lib/audit-client';
 import { EntityAuditHistory } from '@/components/entity-audit-history';
+import { EntityCreatedBy } from '@/components/entity-created-by';
 import { TripNotesPanel } from '@/components/trip-notes-panel';
 import { MultiEntryPreview } from '@/components/multi-entry-preview';
 import { confirmAction } from '@/components/confirm-dialog';
@@ -1399,6 +1400,11 @@ export default function TripsPage() {
                     <p className="mt-0.5 text-sm text-gray-500">
                       {formatDate(viewingTrip.date)} · {viewingTrip.vehicle_number} · {viewingTrip.driver_name}
                     </p>
+                    <EntityCreatedBy
+                      entityType="trip"
+                      entityId={viewingTrip.id}
+                      className="mt-1"
+                    />
                   </div>
                   <div className="shrink-0 text-right">
                     <p className="text-xl font-bold text-green-600 sm:text-2xl">

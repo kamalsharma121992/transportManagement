@@ -50,6 +50,7 @@ import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { recordAudit } from '@/lib/audit-client';
 import { EntityAuditHistory } from '@/components/entity-audit-history';
+import { EntityCreatedBy } from '@/components/entity-created-by';
 import { ExpenseDescriptionsPanel } from '@/components/expense-descriptions-panel';
 import { MultiEntryPreview } from '@/components/multi-entry-preview';
 import { confirmAction } from '@/components/confirm-dialog';
@@ -1166,6 +1167,11 @@ export default function ExpensesPage() {
                         {formatDate(viewingExpense.date)}
                         {viewingExpense.vehicle_number ? ` · ${viewingExpense.vehicle_number}` : ''}
                       </p>
+                      <EntityCreatedBy
+                        entityType="expense"
+                        entityId={viewingExpense.id}
+                        className="mt-1"
+                      />
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="text-xl font-bold text-red-600 sm:text-2xl">
