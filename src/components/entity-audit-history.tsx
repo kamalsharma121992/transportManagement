@@ -7,6 +7,7 @@ import {
   type AuditEntityType,
   type EntityAuditRow,
 } from '@/lib/audit-client';
+import { cn } from '@/lib/utils';
 
 const actionLabel: Record<string, string> = {
   add: 'Added',
@@ -31,9 +32,13 @@ function formatWhen(iso: string) {
 export function EntityAuditHistory({
   entityType,
   entityId,
+  className,
+  listClassName,
 }: {
   entityType: AuditEntityType;
   entityId: number;
+  className?: string;
+  listClassName?: string;
 }) {
   const [rows, setRows] = useState<EntityAuditRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +58,7 @@ export function EntityAuditHistory({
   }, [entityType, entityId]);
 
   return (
-    <div className="border-t pt-4 space-y-2">
+    <div className={cn('border-t pt-4 space-y-2', className)}>
       <p className="text-[10px] uppercase text-gray-500 tracking-wide">Audit history</p>
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
@@ -66,7 +71,7 @@ export function EntityAuditHistory({
           No history yet for this entry. New changes will appear here.
         </p>
       ) : (
-        <ul className="space-y-2 max-h-48 overflow-y-auto">
+        <ul className={cn('space-y-2 max-h-48 overflow-y-auto', listClassName)}>
           {rows.map((row) => (
             <li key={row.id} className="rounded-md border bg-gray-50 px-3 py-2 text-sm">
               <div className="flex items-start justify-between gap-2">

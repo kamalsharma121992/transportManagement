@@ -50,6 +50,9 @@ import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { recordAudit } from '@/lib/audit-client';
 import { EntityAuditHistory } from '@/components/entity-audit-history';
+import { ExpenseNotesPanel } from '@/components/expense-notes-panel';
+import { addExpenseNote } from '@/lib/expense-notes';
+import { useSession } from '@/components/session-provider';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { readMonthParam, readSortParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
 import { SortableTableHead } from '@/components/sortable-table-head';
@@ -72,6 +75,7 @@ const emptyForm = {
   payment_mode: 'Cash',
   credit_card_id: '',
   card_details: '',
+  notes: '',
 };
 
 function capitalResultMessage(
@@ -125,6 +129,7 @@ const categoryColor: Record<string, string> = {
 export default function ExpensesPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const session = useSession();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [partners, setPartners] = useState<string[]>([]);
@@ -584,7 +589,7 @@ export default function ExpensesPage() {
       toast.error('Person is required for Expense Advance (who received the cash)');
       return;
     }
-    const { payment_mode, card_details, credit_card_id, ...rest } = form;
+    const { payment_mode, card_details, credit_card_id, notes, ...rest } = form;
     const cardId = credit_card_id ? Number(credit_card_id) : null;
     const selectedCard = creditCards.find((c) => c.id === cardId);
     const cardHolder = cardHolderForSource(form.payment_source, form.paid_by_person);
@@ -616,6 +621,8 @@ export default function ExpensesPage() {
       card_id: useCard ? cardId : null,
       image_urls: expenseImageUrls,
       image_url: expenseImageUrls[0] || null,
+      // Notes timeline owns this field after create; only set on insert
+      ...(editingId ? {} : { notes: notes.trim() || null }),
     };
     const capitalInput: ExpenseCapitalInput = {
       date: form.date,
@@ -733,6 +740,13 @@ export default function ExpensesPage() {
           toast.success('Expense added');
           recordAudit('add', 'Expenses', expenseAuditSummary('Added', form.category, Number(form.amount), form.date, ''));
         }
+
+        if (inserted?.id && notes.trim()) {
+          const actor = session?.name || session?.username || 'Unknown';
+          const noteResult = await addExpenseNote(inserted.id, notes, actor);
+          if (noteResult.error) toast.error('Expense saved but note failed: ' + noteResult.error);
+          else recordAudit('add', 'Expenses', `Added note on expense #${inserted.id}`, { type: 'expense', id: inserted.id });
+        }
       }
       closeExpenseDialog();
       fetchExpenses();
@@ -766,6 +780,7 @@ export default function ExpensesPage() {
         : paymentModeForCategory(exp.category),
       credit_card_id: exp.card_id ? String(exp.card_id) : '',
       card_details: '',
+      notes: '',
     });
     setDialogOpen(true);
   }
@@ -819,7 +834,7 @@ export default function ExpensesPage() {
         search={{
           value: searchInput,
           onChange: setSearchInput,
-          placeholder: 'Search description, category, vehicle...',
+          placeholder: 'Search description, category, vehicle, notes...',
         }}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
@@ -878,250 +893,340 @@ export default function ExpensesPage() {
         </div>
       )}
         <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) closeExpenseDialog(); else setDialogOpen(true); }}>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
-            <DialogHeader>
-              <DialogTitle>{editingId ? 'Edit Expense' : 'New Expense'}</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <Label>Expense Type</Label>
-                  <div className="flex gap-2 mt-1">
-                    {EXPENSE_TYPES.map((t) => (
-                      <button key={t.value} type="button" onClick={() => handleTypeChange(t.value)}
-                        className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${form.expense_type === t.value ? typeColors[t.value] : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <Label>Date</Label>
-                  <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
-                </div>
-                {form.expense_type === 'vehicle' && (
+          <DialogContent
+            className={cn(
+              'fixed inset-y-0 right-0 left-auto top-0 z-50 flex h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-l p-0 sm:max-w-xl sm:rounded-l-xl',
+              editingId && 'lg:max-w-3xl',
+              'data-open:zoom-in-100 data-closed:zoom-out-100 data-open:slide-in-from-right data-closed:slide-out-to-right',
+            )}
+          >
+            <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+              <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:px-5">
+                <DialogTitle>{editingId ? 'Edit Expense' : 'New Expense'}</DialogTitle>
+                <p className="text-sm text-gray-500">
+                  {editingId ? 'Update expense details, payment, and notes' : 'Add a new expense'}
+                </p>
+              </DialogHeader>
+
+              <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-5">
+                <section className="space-y-3">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">Basics</p>
                   <div>
-                    <Label>Vehicle</Label>
-                    <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value })} required>
-                      <option value="">Select</option>
-                      {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
-                    </select>
-                  </div>
-                )}
-                <div>
-                  <Label>Category</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.category} onChange={(e) => handleCategoryChange(e.target.value)} required>
-                    <option value="">Select</option>
-                    {availableCategories.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <Label>Amount ({'\u20B9'})</Label>
-                  <Input type="number" step="0.01" value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} required />
-                </div>
-                <div className="col-span-2">
-                  <Label>Description</Label>
-                  <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-                </div>
-                <div>
-                  <Label>Paid By (Entity)</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.paid_by} onChange={(e) => setForm({ ...form, paid_by: e.target.value })}>
-                    <option value="JM transport">JM Transport</option>
-                    <option value="Mahesh">Mahesh</option>
-                  </select>
-                </div>
-                <div>
-                  <Label>Paid By (Person)</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.paid_by_person} onChange={(e) => setForm({ ...form, paid_by_person: e.target.value, credit_card_id: '' })}>
-                    <option value="">Select</option>
-                    {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <Label>
-                    Given To
-                    {form.category === EXPENSE_ADVANCE_CATEGORY && <span className="text-red-500"> *</span>}
-                  </Label>
-                  <select
-                    className="w-full border rounded-md px-3 py-2 text-sm"
-                    value={form.person}
-                    onChange={(e) => setForm({ ...form, person: e.target.value })}
-                    required={form.category === EXPENSE_ADVANCE_CATEGORY}
-                  >
-                    <option value="">Select</option>
-                    {partners.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  {form.category === EXPENSE_ADVANCE_CATEGORY && (
-                    <p className="text-[10px] text-gray-400 mt-1">Who received the cash — settle later under Expense Advances</p>
-                  )}
-                </div>
-                <div>
-                  <Label>Status</Label>
-                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                    <option value="Paid">Paid</option>
-                    <option value="Pending">Pending</option>
-                  </select>
-                </div>
-                <div>
-                  <Label>Paid From</Label>
-                  <select
-                    className="w-full border rounded-md px-3 py-2 text-sm"
-                    value={form.payment_source}
-                    onChange={(e) => {
-                      const payment_source = e.target.value;
-                      setForm({
-                        ...form,
-                        payment_source,
-                        credit_card_id: '',
-                        card_details: '',
-                        ...(payment_source === 'Revenue' ? { payment_mode: 'Cash' } : {}),
-                      });
-                    }}
-                  >
-                    {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                {form.payment_source !== 'Revenue' && (
-                  <>
-                    <div>
-                      <Label>Payment Mode</Label>
-                      <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.payment_mode} onChange={(e) => setForm({ ...form, payment_mode: e.target.value, credit_card_id: '', card_details: '' })}>
-                        <option value="Cash">Cash</option>
-                        <option value="Credit Card">Credit Card</option>
-                        <option value="Bank Transfer">Bank Transfer</option>
-                      </select>
+                    <Label>Expense type</Label>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {EXPENSE_TYPES.map((t) => (
+                        <button
+                          key={t.value}
+                          type="button"
+                          onClick={() => handleTypeChange(t.value)}
+                          className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${form.expense_type === t.value ? typeColors[t.value] : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
                     </div>
-                    {form.payment_mode === 'Credit Card' && (
-                      <div className="col-span-2">
-                        <Label>Credit Card</Label>
-                        {holderCards.length > 0 ? (
-                          <select
-                            className="w-full border rounded-md px-3 py-2 text-sm"
-                            value={form.credit_card_id}
-                            onChange={(e) => setForm({ ...form, credit_card_id: e.target.value, card_details: '' })}
-                            required={!cardsTableMissing}
-                          >
-                            <option value="">Select card</option>
-                            {holderCards.map((c) => (
-                              <option key={c.id} value={c.id}>{formatCardOption(c)}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <>
-                            <Input
-                              value={form.card_details}
-                              onChange={(e) => setForm({ ...form, card_details: e.target.value })}
-                              placeholder="e.g. HDFC VISA (add cards in Admin)"
-                            />
-                            {!cardsTableMissing && cardHolder && (
-                              <p className="text-xs text-amber-600 mt-1">No cards for {cardHolder}. Add one in Admin → Credit Cards.</p>
-                            )}
-                          </>
-                        )}
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label>Date</Label>
+                      <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
+                    </div>
+                    {form.expense_type === 'vehicle' && (
+                      <div>
+                        <Label>Vehicle</Label>
+                        <select className="w-full rounded-md border px-3 py-2 text-sm" value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value })} required>
+                          <option value="">Select</option>
+                          {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
+                        </select>
                       </div>
                     )}
-                  </>
+                    <div>
+                      <Label>Category</Label>
+                      <select className="w-full rounded-md border px-3 py-2 text-sm" value={form.category} onChange={(e) => handleCategoryChange(e.target.value)} required>
+                        <option value="">Select</option>
+                        {availableCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <Label>Amount ({'\u20B9'})</Label>
+                      <Input type="number" step="0.01" value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} required />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Label>Description</Label>
+                      <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-3 border-t pt-5">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">Who &amp; status</p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label>Paid by (entity)</Label>
+                      <select className="w-full rounded-md border px-3 py-2 text-sm" value={form.paid_by} onChange={(e) => setForm({ ...form, paid_by: e.target.value })}>
+                        <option value="JM transport">JM Transport</option>
+                        <option value="Mahesh">Mahesh</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label>Paid by (person)</Label>
+                      <select className="w-full rounded-md border px-3 py-2 text-sm" value={form.paid_by_person} onChange={(e) => setForm({ ...form, paid_by_person: e.target.value, credit_card_id: '' })}>
+                        <option value="">Select</option>
+                        {JM_PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <Label>
+                        Given to
+                        {form.category === EXPENSE_ADVANCE_CATEGORY && <span className="text-red-500"> *</span>}
+                      </Label>
+                      <select
+                        className="w-full rounded-md border px-3 py-2 text-sm"
+                        value={form.person}
+                        onChange={(e) => setForm({ ...form, person: e.target.value })}
+                        required={form.category === EXPENSE_ADVANCE_CATEGORY}
+                      >
+                        <option value="">Select</option>
+                        {partners.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                      {form.category === EXPENSE_ADVANCE_CATEGORY && (
+                        <p className="mt-1 text-[10px] text-gray-400">Who received the cash — settle later under Expense Advances</p>
+                      )}
+                    </div>
+                    <div>
+                      <Label>Status</Label>
+                      <select className="w-full rounded-md border px-3 py-2 text-sm" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                        <option value="Paid">Paid</option>
+                        <option value="Pending">Pending</option>
+                      </select>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-3 border-t pt-5">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">Payment</p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label>Paid from</Label>
+                      <select
+                        className="w-full rounded-md border px-3 py-2 text-sm"
+                        value={form.payment_source}
+                        onChange={(e) => {
+                          const payment_source = e.target.value;
+                          setForm({
+                            ...form,
+                            payment_source,
+                            credit_card_id: '',
+                            card_details: '',
+                            ...(payment_source === 'Revenue' ? { payment_mode: 'Cash' } : {}),
+                          });
+                        }}
+                      >
+                        {PAYMENT_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
+                    {form.payment_source !== 'Revenue' && (
+                      <>
+                        <div>
+                          <Label>Payment mode</Label>
+                          <select className="w-full rounded-md border px-3 py-2 text-sm" value={form.payment_mode} onChange={(e) => setForm({ ...form, payment_mode: e.target.value, credit_card_id: '', card_details: '' })}>
+                            <option value="Cash">Cash</option>
+                            <option value="Credit Card">Credit Card</option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                          </select>
+                        </div>
+                        {form.payment_mode === 'Credit Card' && (
+                          <div className="sm:col-span-2">
+                            <Label>Credit card</Label>
+                            {holderCards.length > 0 ? (
+                              <select
+                                className="w-full rounded-md border px-3 py-2 text-sm"
+                                value={form.credit_card_id}
+                                onChange={(e) => setForm({ ...form, credit_card_id: e.target.value, card_details: '' })}
+                                required={!cardsTableMissing}
+                              >
+                                <option value="">Select card</option>
+                                {holderCards.map((c) => (
+                                  <option key={c.id} value={c.id}>{formatCardOption(c)}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <>
+                                <Input
+                                  value={form.card_details}
+                                  onChange={(e) => setForm({ ...form, card_details: e.target.value })}
+                                  placeholder="e.g. HDFC VISA (add cards in Admin)"
+                                />
+                                {!cardsTableMissing && cardHolder && (
+                                  <p className="mt-1 text-xs text-amber-600">No cards for {cardHolder}. Add one in Admin → Credit Cards.</p>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </section>
+
+                <section className="space-y-3 border-t pt-5">
+                  <MultiImageField
+                    label="Receipt images (optional)"
+                    existingUrls={expenseImageUrls}
+                    pendingPreviews={imagePreviewUrls}
+                    onAddFiles={handleAddImageFiles}
+                    onRemoveExisting={removeExistingExpenseImage}
+                    onRemovePending={removePendingExpenseImage}
+                    onView={(url) => {
+                      const all = [...expenseImageUrls, ...imagePreviewUrls];
+                      openImageGallery(all, all.indexOf(url));
+                    }}
+                  />
+                </section>
+
+                {!editingId && (
+                  <section className="space-y-3 border-t pt-5">
+                    <Label>First note (optional)</Label>
+                    <Input
+                      value={form.notes}
+                      onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                      placeholder="Saved as the first note after the expense is created"
+                    />
+                  </section>
                 )}
               </div>
-              <div>
-                <MultiImageField
-                  label="Receipt images (optional)"
-                  existingUrls={expenseImageUrls}
-                  pendingPreviews={imagePreviewUrls}
-                  onAddFiles={handleAddImageFiles}
-                  onRemoveExisting={removeExistingExpenseImage}
-                  onRemovePending={removePendingExpenseImage}
-                  onView={(url) => {
-                    const all = [...expenseImageUrls, ...imagePreviewUrls];
-                    openImageGallery(all, all.indexOf(url));
-                  }}
-                />
+
+              {editingId ? (
+                <aside className="flex max-h-[40vh] min-h-0 w-full shrink-0 flex-col border-t bg-gray-50/60 md:max-h-none md:w-[18.5rem] md:border-t-0 md:border-l lg:w-80">
+                  <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                    <ExpenseNotesPanel expenseId={editingId} listClassName="max-h-none" />
+                  </div>
+                </aside>
+              ) : null}
               </div>
-              <Button type="submit" className="w-full" disabled={saving}>
-                {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</> : `${editingId ? 'Update' : 'Add'} Expense`}
-              </Button>
+
+              <div className="flex shrink-0 gap-2 border-t bg-white px-4 py-3 sm:px-5">
+                <Button type="submit" className="flex-1" disabled={saving}>
+                  {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : `${editingId ? 'Update' : 'Add'} Expense`}
+                </Button>
+                <Button type="button" variant="outline" className="flex-1" disabled={saving} onClick={() => closeExpenseDialog()}>
+                  Cancel
+                </Button>
+              </div>
             </form>
           </DialogContent>
         </Dialog>
 
         <Dialog open={viewingExpense != null} onOpenChange={(open) => { if (!open) setViewingExpense(null); }}>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
-            <DialogHeader>
-              <DialogTitle>Expense</DialogTitle>
-            </DialogHeader>
+          <DialogContent
+            className={cn(
+              'fixed inset-y-0 right-0 left-auto top-0 z-50 flex h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-l p-0 sm:max-w-3xl sm:rounded-l-xl',
+              'data-open:zoom-in-100 data-closed:zoom-out-100 data-open:slide-in-from-right data-closed:slide-out-to-right',
+            )}
+          >
             {viewingExpense && (
-              <div className="space-y-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm text-gray-500">{formatDate(viewingExpense.date)}</p>
-                    <p className="text-2xl font-bold text-red-600">{formatCurrency(Number(viewingExpense.amount))}</p>
-                  </div>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${categoryColor[viewingExpense.category] || 'bg-gray-100 text-gray-800'}`}>
-                    {viewingExpense.category}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                  <div>
-                    <p className="text-[10px] uppercase text-gray-500">Type</p>
-                    <p className="font-medium text-gray-800 capitalize">{viewingExpense.expense_type}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase text-gray-500">Vehicle</p>
-                    <p className="font-medium text-gray-800">{viewingExpense.vehicle_number || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase text-gray-500">Paid by</p>
-                    <p className="font-medium text-gray-800">{viewingExpense.paid_by_person || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase text-gray-500">Given to</p>
-                    <p className="font-medium text-gray-800">{viewingExpense.person || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase text-gray-500">Paid from</p>
-                    <p className="font-medium text-gray-800">{expensePaidFromLabel(viewingExpense, cardFor(viewingExpense))}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase text-gray-500">Entity</p>
-                    <p className="font-medium text-gray-800">{viewingExpense.paid_by || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase text-gray-500">Status</p>
-                    <p className="font-medium text-gray-800">{viewingExpense.status || '—'}</p>
-                  </div>
-                  {viewingExpense.bill_receipt_ref && (
-                    <div>
-                      <p className="text-[10px] uppercase text-gray-500">Bill / receipt</p>
-                      <p className="font-medium text-gray-800 break-all">{viewingExpense.bill_receipt_ref}</p>
+              <>
+                <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:px-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <DialogTitle className="truncate">
+                        {viewingExpense.category}
+                      </DialogTitle>
+                      <p className="mt-0.5 text-sm text-gray-500">
+                        {formatDate(viewingExpense.date)}
+                        {viewingExpense.vehicle_number ? ` · ${viewingExpense.vehicle_number}` : ''}
+                      </p>
                     </div>
-                  )}
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase text-gray-500">Description</p>
-                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{viewingExpense.description || '—'}</p>
-                </div>
-                {expenseImageList(viewingExpense).length > 0 && (
-                  <div>
-                    <p className="text-[10px] uppercase text-gray-500 mb-1">
-                      Receipt{expenseImageList(viewingExpense).length > 1 ? `s (${expenseImageList(viewingExpense).length})` : ''}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {expenseImageList(viewingExpense).map((url, idx) => (
-                        <button
-                          key={`${viewingExpense.id}-view-${idx}`}
-                          type="button"
-                          className="block max-w-[140px] overflow-hidden rounded border"
-                          onClick={() => openImageGallery(expenseImageList(viewingExpense), idx)}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={url} alt="Expense receipt" className="max-h-32 w-full object-contain bg-gray-50" />
-                        </button>
-                      ))}
+                    <div className="shrink-0 text-right">
+                      <p className="text-xl font-bold text-red-600 sm:text-2xl">
+                        {formatCurrency(Number(viewingExpense.amount))}
+                      </p>
+                      <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium capitalize ${categoryColor[viewingExpense.category] || 'bg-gray-100 text-gray-800'}`}>
+                        {viewingExpense.expense_type}
+                      </span>
                     </div>
                   </div>
-                )}
-                <EntityAuditHistory entityType="expense" entityId={viewingExpense.id} />
-                <div className="flex gap-2">
+                </DialogHeader>
+
+                <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+                  <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-5">
+                    <section>
+                      <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-gray-500">Details</p>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                          <p className="text-[10px] uppercase text-gray-500">Paid by</p>
+                          <p className="font-medium text-gray-900">{viewingExpense.paid_by_person || '—'}</p>
+                        </div>
+                        <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                          <p className="text-[10px] uppercase text-gray-500">Given to</p>
+                          <p className="font-medium text-gray-900">{viewingExpense.person || '—'}</p>
+                        </div>
+                        <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                          <p className="text-[10px] uppercase text-gray-500">Paid from</p>
+                          <p className="font-medium text-gray-900">{expensePaidFromLabel(viewingExpense, cardFor(viewingExpense))}</p>
+                        </div>
+                        <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                          <p className="text-[10px] uppercase text-gray-500">Entity</p>
+                          <p className="font-medium text-gray-900">{viewingExpense.paid_by || '—'}</p>
+                        </div>
+                        <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                          <p className="text-[10px] uppercase text-gray-500">Status</p>
+                          <p className="font-medium text-gray-900">{viewingExpense.status || '—'}</p>
+                        </div>
+                        {viewingExpense.bill_receipt_ref && (
+                          <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                            <p className="text-[10px] uppercase text-gray-500">Bill / receipt</p>
+                            <p className="break-all font-medium text-gray-900">{viewingExpense.bill_receipt_ref}</p>
+                          </div>
+                        )}
+                      </div>
+                    </section>
+
+                    <section>
+                      <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-gray-500">Description</p>
+                      <p className="whitespace-pre-wrap text-sm text-gray-800">{viewingExpense.description || '—'}</p>
+                    </section>
+
+                    {expenseImageList(viewingExpense).length > 0 && (
+                      <section>
+                        <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                          Receipt{expenseImageList(viewingExpense).length > 1 ? `s (${expenseImageList(viewingExpense).length})` : ''}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {expenseImageList(viewingExpense).map((url, idx) => (
+                            <button
+                              key={`${viewingExpense.id}-view-${idx}`}
+                              type="button"
+                              className="block max-w-[140px] overflow-hidden rounded border"
+                              onClick={() => openImageGallery(expenseImageList(viewingExpense), idx)}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={url} alt="Expense receipt" className="max-h-32 w-full object-contain bg-gray-50" />
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+                  </div>
+
+                  <aside className="flex max-h-[45vh] min-h-0 w-full shrink-0 flex-col border-t bg-gray-50/60 md:max-h-none md:w-[18.5rem] md:border-t-0 md:border-l lg:w-80">
+                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+                      <ExpenseNotesPanel
+                        expenseId={viewingExpense.id}
+                        listClassName="max-h-none"
+                      />
+                      <EntityAuditHistory
+                        entityType="expense"
+                        entityId={viewingExpense.id}
+                        className="border-t pt-4"
+                        listClassName="max-h-none"
+                      />
+                    </div>
+                  </aside>
+                </div>
+
+                <div className="flex shrink-0 gap-2 border-t bg-white px-4 py-3 sm:px-5">
                   <Button
                     type="button"
                     className="flex-1"
@@ -1131,13 +1236,13 @@ export default function ExpensesPage() {
                       startEdit(expense);
                     }}
                   >
-                    <Pencil className="h-4 w-4 mr-2" /> Edit
+                    <Pencil className="mr-2 h-4 w-4" /> Edit
                   </Button>
                   <Button type="button" variant="outline" className="flex-1" onClick={() => setViewingExpense(null)}>
                     Close
                   </Button>
                 </div>
-              </div>
+              </>
             )}
           </DialogContent>
         </Dialog>

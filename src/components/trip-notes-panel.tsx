@@ -15,6 +15,7 @@ import {
   updateTripNote,
   type TripNote,
 } from '@/lib/trip-notes';
+import { cn } from '@/lib/utils';
 
 async function syncTripNotesPreview(tripId: number, latestNote: string | null) {
   await getSupabase()
@@ -37,7 +38,15 @@ function formatWhen(iso: string) {
   }
 }
 
-export function TripNotesPanel({ tripId }: { tripId: number }) {
+export function TripNotesPanel({
+  tripId,
+  className,
+  listClassName,
+}: {
+  tripId: number;
+  className?: string;
+  listClassName?: string;
+}) {
   const session = useSession();
   const actor = session?.name || session?.username || 'Unknown';
 
@@ -127,7 +136,7 @@ export function TripNotesPanel({ tripId }: { tripId: number }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className={cn('space-y-3', className)}>
       <p className="text-[10px] uppercase text-gray-500 tracking-wide">Notes</p>
 
       <div className="space-y-2">
@@ -163,7 +172,7 @@ export function TripNotesPanel({ tripId }: { tripId: number }) {
       ) : notes.length === 0 ? (
         <p className="text-sm text-gray-500">No notes yet.</p>
       ) : (
-        <ul className="space-y-2 max-h-56 overflow-y-auto">
+        <ul className={cn('space-y-2 max-h-56 overflow-y-auto', listClassName)}>
           {notes.map((n) => (
             <li key={n.id} className="rounded-md border bg-gray-50 px-3 py-2 text-sm">
               {editingId === n.id ? (

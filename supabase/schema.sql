@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   card_id INTEGER REFERENCES credit_cards(id),
   image_url TEXT,
   image_urls TEXT[] DEFAULT '{}',
+  notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

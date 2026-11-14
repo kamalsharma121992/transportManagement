@@ -56,6 +56,7 @@ MIGRATIONS=(
   "supabase/trip_payment.sql"
   "supabase/trip_partial_payment.sql"
   "supabase/trip_notes.sql"
+  "supabase/expense_notes.sql"
   "supabase/routes_commission.sql"
   "supabase/trip_builty.sql"
   "supabase/expense_image.sql"

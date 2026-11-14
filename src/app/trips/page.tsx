@@ -1348,78 +1348,144 @@ export default function TripsPage() {
       </Dialog>
 
       <Dialog open={viewingTrip != null} onOpenChange={(open) => { if (!open) setViewingTrip(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
-          <DialogHeader>
-            <DialogTitle>Trip</DialogTitle>
-          </DialogHeader>
+        <DialogContent
+          className={cn(
+            'fixed inset-y-0 right-0 left-auto top-0 z-50 flex h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-l p-0 sm:max-w-3xl sm:rounded-l-xl',
+            'data-open:zoom-in-100 data-closed:zoom-out-100 data-open:slide-in-from-right data-closed:slide-out-to-right',
+          )}
+        >
           {viewingTrip && (
-            <div className="space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm text-gray-500">{formatDate(viewingTrip.date)}</p>
-                  <p className="text-lg font-bold text-gray-900">{viewingTrip.route_name}</p>
-                  <p className="text-sm text-gray-600">{viewingTrip.vehicle_number} · {viewingTrip.driver_name}</p>
-                </div>
-                <p className="text-2xl font-bold text-green-600">{formatCurrency(Number(viewingTrip.total_revenue))}</p>
-              </div>
-              <div>{renderPaymentBadge(viewingTrip)}</div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                <div>
-                  <p className="text-[10px] uppercase text-gray-500">Weight</p>
-                  <p className="font-medium text-gray-800">{Number(viewingTrip.weight_tons).toFixed(2)} T</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase text-gray-500">Distance</p>
-                  <p className="font-medium text-gray-800">{Number(viewingTrip.distance_km || 0)} km</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase text-gray-500">Rate / ton</p>
-                  <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.rate_per_ton))}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase text-gray-500">Commission</p>
-                  <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.commission || 0))}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase text-gray-500">Advance</p>
-                  <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.advance_paid || 0))}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase text-gray-500">
-                    {isTripWrittenOff(viewingTrip.payment_status) ? 'Will not pay' : 'Pending'}
-                  </p>
-                  <p className="font-medium text-gray-800">{formatCurrency(Number(viewingTrip.balance_due || 0))}</p>
-                </div>
-                {viewingTrip.payment_expected_date && (
-                  <div className="col-span-2">
-                    <p className="text-[10px] uppercase text-gray-500">Expected payment</p>
-                    <p className="font-medium text-gray-800">{formatDate(viewingTrip.payment_expected_date)}</p>
+            <>
+              <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:px-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <DialogTitle className="truncate text-lg font-semibold">
+                      {viewingTrip.route_name}
+                    </DialogTitle>
+                    <p className="mt-0.5 text-sm text-gray-500">
+                      {formatDate(viewingTrip.date)} · {viewingTrip.vehicle_number} · {viewingTrip.driver_name}
+                    </p>
                   </div>
-                )}
-              </div>
-              <TripNotesPanel tripId={viewingTrip.id} />
-              {tripBuiltyUrls(viewingTrip).length > 0 && (
-                <div>
-                  <p className="text-[10px] uppercase text-gray-500 mb-1">
-                    Builty{tripBuiltyUrls(viewingTrip).length > 1 ? ` (${tripBuiltyUrls(viewingTrip).length})` : ''}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {tripBuiltyUrls(viewingTrip).map((url, idx) => (
-                      <button
-                        key={`${viewingTrip.id}-view-builty-${idx}`}
-                        type="button"
-                        className="block max-w-[140px] overflow-hidden rounded border"
-                        onClick={() => openBuiltyGallery(tripBuiltyUrls(viewingTrip), idx)}
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={url} alt="Builty" className="max-h-32 w-full object-contain bg-gray-50" />
-                      </button>
-                    ))}
+                  <div className="shrink-0 text-right">
+                    <p className="text-xl font-bold text-green-600 sm:text-2xl">
+                      {formatCurrency(Number(viewingTrip.total_revenue))}
+                    </p>
+                    <div className="mt-1 flex justify-end">{renderPaymentBadge(viewingTrip)}</div>
                   </div>
                 </div>
-              )}
-              <EntityAuditHistory entityType="trip" entityId={viewingTrip.id} />
-              <div className="flex gap-2">
+              </DialogHeader>
+
+              <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+                {/* Main details */}
+                <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-5">
+                  <section>
+                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-gray-500">Summary</p>
+                    <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                      <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                        <p className="text-[10px] uppercase text-gray-500">Weight</p>
+                        <p className="font-medium text-gray-900">{Number(viewingTrip.weight_tons).toFixed(2)} T</p>
+                      </div>
+                      <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                        <p className="text-[10px] uppercase text-gray-500">Distance</p>
+                        <p className="font-medium text-gray-900">{Number(viewingTrip.distance_km || 0)} km</p>
+                      </div>
+                      <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                        <p className="text-[10px] uppercase text-gray-500">Rate / ton</p>
+                        <p className="font-medium text-gray-900">{formatCurrency(Number(viewingTrip.rate_per_ton))}</p>
+                      </div>
+                      <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                        <p className="text-[10px] uppercase text-gray-500">Commission</p>
+                        <p className="font-medium text-gray-900">{formatCurrency(Number(viewingTrip.commission || 0))}</p>
+                      </div>
+                      <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                        <p className="text-[10px] uppercase text-gray-500">Driver</p>
+                        <p className="font-medium text-gray-900 truncate">{viewingTrip.driver_name}</p>
+                      </div>
+                      <div className="rounded-lg border bg-gray-50/80 px-3 py-2">
+                        <p className="text-[10px] uppercase text-gray-500">Vehicle</p>
+                        <p className="font-medium text-gray-900 truncate">{viewingTrip.vehicle_number}</p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section>
+                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-gray-500">Payment</p>
+                    <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                      <div className="space-y-2 rounded-lg border px-3 py-2 text-sm">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-gray-500">Total freight</span>
+                          <span className="font-medium text-gray-900">{formatCurrency(Number(viewingTrip.total_revenue))}</span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-gray-500">Advance</span>
+                          <span className="font-medium text-gray-900">{formatCurrency(Number(viewingTrip.advance_paid || 0))}</span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-gray-500">
+                            {isTripWrittenOff(viewingTrip.payment_status) ? 'Will not pay' : 'Balance due'}
+                          </span>
+                          <span className="font-medium text-gray-900">{formatCurrency(Number(viewingTrip.balance_due || 0))}</span>
+                        </div>
+                        {viewingTrip.payment_expected_date && (
+                          <div className="flex justify-between gap-2 border-t pt-2">
+                            <span className="text-gray-500">Expected</span>
+                            <span className="font-medium text-gray-900">{formatDate(viewingTrip.payment_expected_date)}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex min-w-[9.5rem] flex-col justify-center rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-center">
+                        <p className="text-[10px] uppercase text-green-700">Collected</p>
+                        <p className="text-lg font-bold text-green-700">
+                          {formatCurrency(
+                            viewingTrip.payment_status === 'Fully Paid'
+                              ? Number(viewingTrip.total_revenue)
+                              : Number(viewingTrip.advance_paid || 0),
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+
+                  {tripBuiltyUrls(viewingTrip).length > 0 && (
+                    <section>
+                      <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                        Builty{tripBuiltyUrls(viewingTrip).length > 1 ? ` (${tripBuiltyUrls(viewingTrip).length})` : ''}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {tripBuiltyUrls(viewingTrip).map((url, idx) => (
+                          <button
+                            key={`${viewingTrip.id}-view-builty-${idx}`}
+                            type="button"
+                            className="block max-w-[140px] overflow-hidden rounded border"
+                            onClick={() => openBuiltyGallery(tripBuiltyUrls(viewingTrip), idx)}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={url} alt="Builty" className="max-h-32 w-full object-contain bg-gray-50" />
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                </div>
+
+                {/* Side panel: Notes + Audit */}
+                <aside className="flex max-h-[45vh] min-h-0 w-full shrink-0 flex-col border-t bg-gray-50/60 md:max-h-none md:w-[18.5rem] md:border-t-0 md:border-l lg:w-80">
+                  <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+                    <TripNotesPanel
+                      tripId={viewingTrip.id}
+                      listClassName="max-h-none"
+                    />
+                    <EntityAuditHistory
+                      entityType="trip"
+                      entityId={viewingTrip.id}
+                      className="border-t pt-4"
+                      listClassName="max-h-none"
+                    />
+                  </div>
+                </aside>
+              </div>
+
+              <div className="flex shrink-0 gap-2 border-t bg-white px-4 py-3 sm:px-5">
                 <Button
                   type="button"
                   className="flex-1"
@@ -1429,210 +1495,251 @@ export default function TripsPage() {
                     startEdit(trip);
                   }}
                 >
-                  <Pencil className="h-4 w-4 mr-2" /> Edit
+                  <Pencil className="mr-2 h-4 w-4" /> Edit
                 </Button>
                 <Button type="button" variant="outline" className="flex-1" onClick={() => setViewingTrip(null)}>
                   Close
                 </Button>
               </div>
-            </div>
+            </>
           )}
         </DialogContent>
       </Dialog>
 
-      {/* Single trip add/edit dialog */}
+      {/* Single trip add/edit side sheet */}
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) resetFormDialog(); else setDialogOpen(true); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[calc(100%-1.5rem)]">
-          <DialogHeader>
-            <DialogTitle>{editingId ? 'Edit Trip' : 'New Trip'}</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <Label>Date</Label>
-                <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
-              </div>
-              <div>
-                <Label>Vehicle</Label>
-                <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value })} required>
-                  <option value="">Select</option>
-                  {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
-                </select>
-              </div>
-              <div>
-                <Label>Route</Label>
-                <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.route_name} onChange={(e) => handleRouteChange(e.target.value)} required>
-                  <option value="">Select</option>
-                  {routes.map((r) => <option key={r.route_name} value={r.route_name}>{r.route_name}</option>)}
-                </select>
-              </div>
-              <div>
-                <Label>Driver</Label>
-                <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.driver_name} onChange={(e) => setForm({ ...form, driver_name: e.target.value })} required>
-                  <option value="">Select</option>
-                  {drivers.map((d) => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <Label>Weight (Tons)</Label>
-                <Input type="number" step="0.01" value={form.weight_tons || ''} onChange={(e) => recalcRevenue(Number(e.target.value), form.rate_per_ton)} required />
-              </div>
-              <div>
-                <Label>Distance (KM)</Label>
-                <Input type="number" value={form.distance_km || ''} onChange={(e) => setForm({ ...form, distance_km: Number(e.target.value) })} required />
-              </div>
-              <div>
-                <Label>Rate/Ton</Label>
-                <Input type="number" step="0.01" value={form.rate_per_ton || ''} onChange={(e) => recalcRevenue(form.weight_tons, Number(e.target.value))} required />
-              </div>
-              <div>
-                <Label>Commission ({'\u20B9'})</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={form.commission}
-                  onChange={(e) => {
-                    const commission = e.target.value === '' ? 0 : Number(e.target.value);
-                    recalcRevenue(form.weight_tons, form.rate_per_ton, commission);
-                  }}
-                />
-                <p className="text-[10px] text-gray-400 mt-1">Auto from route — editable</p>
-              </div>
-              <div>
-                <Label>Total Revenue</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={form.total_revenue || ''}
-                  onChange={(e) => {
-                    const total_revenue = Number(e.target.value);
-                    setForm((f) => applyPaymentAmounts({ ...f, total_revenue }, fullPending));
-                  }}
-                  required
-                />
-                <p className="text-[10px] text-gray-400 mt-1">weight × rate − commission</p>
-              </div>
-              <div>
-                <Label>Advance Paid</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={form.advance_paid || ''}
-                  onChange={(e) => {
-                    const advance_paid = Number(e.target.value);
-                    setForm((f) => {
-                      const next = { ...f, advance_paid };
-                      return f.payment_status === 'Will not pay' ? withWillNotPayAmounts(next) : next;
-                    });
-                    if (fullPending && advance_paid !== 0) setFullPending(false);
-                  }}
-                />
-              </div>
-              <div>
-                <Label>{form.payment_status === 'Will not pay' ? 'Amount not coming' : 'Balance Due'}</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={form.balance_due || ''}
-                  onChange={(e) => {
-                    const balance_due = Number(e.target.value);
-                    setForm((f) => ({ ...f, balance_due }));
-                    if (fullPending && balance_due !== form.total_revenue) setFullPending(false);
-                  }}
-                />
-              </div>
-              <div>
-                <Label>Payment</Label>
-                <select
-                  className="w-full border rounded-md px-3 py-2 text-sm"
-                  value={form.payment_status}
-                  onChange={(e) => {
-                    const payment_status = e.target.value as TripPaymentStatus;
-                    const nextFullPending = payment_status === 'Pending';
-                    setFullPending(nextFullPending);
-                    setForm((f) => {
-                      if (payment_status === 'Fully Paid') {
-                        return { ...f, payment_status, balance_due: 0, payment_expected_date: '' };
-                      }
-                      if (payment_status === 'Will not pay') {
-                        return withWillNotPayAmounts({ ...f, payment_status, payment_expected_date: '' });
-                      }
-                      return withFullPendingAmounts({ ...f, payment_status }, nextFullPending);
-                    });
-                  }}
-                >
-                  {TRIP_PAYMENT_STATUSES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-                {form.payment_status === 'Will not pay' && (
-                  <p className="text-[10px] text-gray-500 mt-1">
-                    Remaining balance will not be collected. Any advance already received is kept.
-                  </p>
+        <DialogContent
+          className={cn(
+            'fixed inset-y-0 right-0 left-auto top-0 z-50 flex h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-l p-0 sm:max-w-3xl sm:rounded-l-xl',
+            editingId && 'lg:max-w-4xl',
+            'data-open:zoom-in-100 data-closed:zoom-out-100 data-open:slide-in-from-right data-closed:slide-out-to-right',
+          )}
+        >
+          <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+            <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:px-5">
+              <DialogTitle>{editingId ? 'Edit Trip' : 'New Trip'}</DialogTitle>
+              <p className="text-sm text-gray-500">
+                {editingId ? 'Update trip details, payment, and notes' : 'Enter trip details and payment info'}
+              </p>
+            </DialogHeader>
+
+            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-5">
+                <section className="space-y-3">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">Trip details</p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label>Date</Label>
+                      <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
+                    </div>
+                    <div>
+                      <Label>Vehicle</Label>
+                      <select className="w-full rounded-md border px-3 py-2 text-sm" value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value })} required>
+                        <option value="">Select</option>
+                        {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <Label>Route</Label>
+                      <select className="w-full rounded-md border px-3 py-2 text-sm" value={form.route_name} onChange={(e) => handleRouteChange(e.target.value)} required>
+                        <option value="">Select</option>
+                        {routes.map((r) => <option key={r.route_name} value={r.route_name}>{r.route_name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <Label>Driver</Label>
+                      <select className="w-full rounded-md border px-3 py-2 text-sm" value={form.driver_name} onChange={(e) => setForm({ ...form, driver_name: e.target.value })} required>
+                        <option value="">Select</option>
+                        {drivers.map((d) => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-3 border-t pt-5">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">Load &amp; pricing</p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label>Weight (Tons)</Label>
+                      <Input type="number" step="0.01" value={form.weight_tons || ''} onChange={(e) => recalcRevenue(Number(e.target.value), form.rate_per_ton)} required />
+                    </div>
+                    <div>
+                      <Label>Distance (KM)</Label>
+                      <Input type="number" value={form.distance_km || ''} onChange={(e) => setForm({ ...form, distance_km: Number(e.target.value) })} required />
+                    </div>
+                    <div>
+                      <Label>Rate / ton</Label>
+                      <Input type="number" step="0.01" value={form.rate_per_ton || ''} onChange={(e) => recalcRevenue(form.weight_tons, Number(e.target.value))} required />
+                    </div>
+                    <div>
+                      <Label>Commission ({'\u20B9'})</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={form.commission}
+                        onChange={(e) => {
+                          const commission = e.target.value === '' ? 0 : Number(e.target.value);
+                          recalcRevenue(form.weight_tons, form.rate_per_ton, commission);
+                        }}
+                      />
+                      <p className="mt-1 text-[10px] text-gray-400">Auto from route — editable</p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Label>Total revenue</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={form.total_revenue || ''}
+                        onChange={(e) => {
+                          const total_revenue = Number(e.target.value);
+                          setForm((f) => applyPaymentAmounts({ ...f, total_revenue }, fullPending));
+                        }}
+                        required
+                      />
+                      <p className="mt-1 text-[10px] text-gray-400">weight × rate − commission</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-3 border-t pt-5">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">Payment</p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <Label>Payment status</Label>
+                      <select
+                        className="w-full rounded-md border px-3 py-2 text-sm"
+                        value={form.payment_status}
+                        onChange={(e) => {
+                          const payment_status = e.target.value as TripPaymentStatus;
+                          const nextFullPending = payment_status === 'Pending';
+                          setFullPending(nextFullPending);
+                          setForm((f) => {
+                            if (payment_status === 'Fully Paid') {
+                              return { ...f, payment_status, balance_due: 0, payment_expected_date: '' };
+                            }
+                            if (payment_status === 'Will not pay') {
+                              return withWillNotPayAmounts({ ...f, payment_status, payment_expected_date: '' });
+                            }
+                            return withFullPendingAmounts({ ...f, payment_status }, nextFullPending);
+                          });
+                        }}
+                      >
+                        {TRIP_PAYMENT_STATUSES.map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                      {form.payment_status === 'Will not pay' && (
+                        <p className="mt-1 text-[10px] text-gray-500">
+                          Remaining balance will not be collected. Any advance already received is kept.
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <Label>Advance paid</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={form.advance_paid || ''}
+                        onChange={(e) => {
+                          const advance_paid = Number(e.target.value);
+                          setForm((f) => {
+                            const next = { ...f, advance_paid };
+                            return f.payment_status === 'Will not pay' ? withWillNotPayAmounts(next) : next;
+                          });
+                          if (fullPending && advance_paid !== 0) setFullPending(false);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <Label>{form.payment_status === 'Will not pay' ? 'Amount not coming' : 'Balance due'}</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={form.balance_due || ''}
+                        onChange={(e) => {
+                          const balance_due = Number(e.target.value);
+                          setForm((f) => ({ ...f, balance_due }));
+                          if (fullPending && balance_due !== form.total_revenue) setFullPending(false);
+                        }}
+                      />
+                    </div>
+                    {form.payment_status === 'Pending' && (
+                      <>
+                        <div className="flex items-center gap-2 sm:col-span-2">
+                          <input
+                            id="full-pending"
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={fullPending}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setFullPending(checked);
+                              if (checked) {
+                                setForm((f) => withFullPendingAmounts(f, true));
+                              }
+                            }}
+                          />
+                          <Label htmlFor="full-pending" className="font-normal">Full amount pending</Label>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <Label>Expected payment date</Label>
+                          <Input
+                            type="date"
+                            value={form.payment_expected_date}
+                            onChange={(e) => setForm({ ...form, payment_expected_date: e.target.value })}
+                          />
+                          <p className="mt-1 text-[10px] text-gray-400">Optional reminder for remaining balance</p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </section>
+
+                <section className="space-y-3 border-t pt-5">
+                  <MultiImageField
+                    label="Builty (images)"
+                    existingUrls={builtyUrls}
+                    pendingPreviews={builtyPreviewUrls}
+                    onAddFiles={handleAddBuiltyFiles}
+                    onRemoveExisting={removeExistingBuilty}
+                    onRemovePending={removePendingBuilty}
+                    onView={(url) => {
+                      const all = [...builtyUrls, ...builtyPreviewUrls];
+                      openBuiltyGallery(all, all.indexOf(url));
+                    }}
+                  />
+                </section>
+
+                {!editingId && (
+                  <section className="space-y-3 border-t pt-5">
+                    <Label>First note (optional)</Label>
+                    <Input
+                      value={form.notes}
+                      onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                      placeholder="Saved as the first note after the trip is created"
+                    />
+                  </section>
                 )}
               </div>
-              {form.payment_status === 'Pending' && (
-                <>
-                  <div className="flex items-center gap-2">
-                    <input
-                      id="full-pending"
-                      type="checkbox"
-                      className="h-4 w-4"
-                      checked={fullPending}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setFullPending(checked);
-                        if (checked) {
-                          setForm((f) => withFullPendingAmounts(f, true));
-                        }
-                      }}
-                    />
-                    <Label htmlFor="full-pending" className="font-normal">Full amount pending</Label>
-                  </div>
-                  <div>
-                    <Label>Expected payment date</Label>
-                    <Input
-                      type="date"
-                      value={form.payment_expected_date}
-                      onChange={(e) => setForm({ ...form, payment_expected_date: e.target.value })}
-                    />
-                    <p className="text-[10px] text-gray-400 mt-1">Optional reminder for remaining balance</p>
-                  </div>
-                </>
-              )}
-              <div className="sm:col-span-2">
-                <MultiImageField
-                  label="Builty (images)"
-                  existingUrls={builtyUrls}
-                  pendingPreviews={builtyPreviewUrls}
-                  onAddFiles={handleAddBuiltyFiles}
-                  onRemoveExisting={removeExistingBuilty}
-                  onRemovePending={removePendingBuilty}
-                  onView={(url) => {
-                    const all = [...builtyUrls, ...builtyPreviewUrls];
-                    openBuiltyGallery(all, all.indexOf(url));
-                  }}
-                />
-              </div>
+
               {editingId ? (
-                <div className="sm:col-span-2">
-                  <TripNotesPanel tripId={editingId} />
-                </div>
-              ) : (
-                <div className="sm:col-span-2">
-                  <Label>First note (optional)</Label>
-                  <Input
-                    value={form.notes}
-                    onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                    placeholder="Saved as the first note after the trip is created"
-                  />
-                </div>
-              )}
+                <aside className="flex max-h-[40vh] min-h-0 w-full shrink-0 flex-col border-t bg-gray-50/60 md:max-h-none md:w-[18.5rem] md:border-t-0 md:border-l lg:w-80">
+                  <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                    <TripNotesPanel tripId={editingId} listClassName="max-h-none" />
+                  </div>
+                </aside>
+              ) : null}
             </div>
-            <Button type="submit" className="w-full" disabled={saving}>
-              {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</> : `${editingId ? 'Update' : 'Add'} Trip`}
-            </Button>
+
+            <div className="flex shrink-0 gap-2 border-t bg-white px-4 py-3 sm:px-5">
+              <Button type="submit" className="flex-1" disabled={saving}>
+                {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : `${editingId ? 'Update' : 'Add'} Trip`}
+              </Button>
+              <Button type="button" variant="outline" className="flex-1" disabled={saving} onClick={() => resetFormDialog()}>
+                Cancel
+              </Button>
+            </div>
           </form>
         </DialogContent>
       </Dialog>
