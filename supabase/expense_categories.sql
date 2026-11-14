@@ -13,6 +13,7 @@ CREATE INDEX IF NOT EXISTS idx_expense_categories_type ON expense_categories(exp
 
 ALTER TABLE expense_categories ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Allow all on expense_categories" ON expense_categories;
 CREATE POLICY "Allow all on expense_categories" ON expense_categories FOR ALL USING (true) WITH CHECK (true);
 
 INSERT INTO expense_categories (name, expense_type, sort_order) VALUES

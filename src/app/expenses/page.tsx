@@ -49,6 +49,7 @@ import { getSupabaseRange } from '@/lib/pagination';
 import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS } from '@/lib/search';
 import { applySupabaseSort } from '@/lib/sort';
 import { recordAudit } from '@/lib/audit-client';
+import { EntityAuditHistory } from '@/components/entity-audit-history';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { readMonthParam, readSortParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
 import { SortableTableHead } from '@/components/sortable-table-head';
@@ -671,7 +672,12 @@ export default function ExpensesPage() {
           : previousCard && !nextCard
             ? `card removed (was ${previousCard})`
             : nextCard;
-        recordAudit('edit', 'Expenses', expenseAuditSummary('Updated', form.category, Number(form.amount), form.date, cardNote));
+        recordAudit(
+          'edit',
+          'Expenses',
+          expenseAuditSummary('Updated', form.category, Number(form.amount), form.date, cardNote),
+          { type: 'expense', id: editingId },
+        );
       } else {
         const { data: inserted, error } = await supabase.from('expenses').insert(payload).select('id').single();
         if (error) { toast.error(error.message); return; }
@@ -699,20 +705,30 @@ export default function ExpensesPage() {
               description: form.description || null,
             });
             toast.success('Expense Advance added — track settlement under Expense Advances');
-            recordAudit('add', 'Expenses', `Added expense advance ₹${form.amount} for ${form.person} on ${form.date}`);
+            recordAudit(
+              'add',
+              'Expenses',
+              `Added expense advance ₹${form.amount} for ${form.person} on ${form.date}`,
+              { type: 'expense', id: inserted.id },
+            );
           } catch (syncErr) {
             toast.error(syncErr instanceof Error ? syncErr.message : 'Expense saved but expense advance sync failed');
           }
         } else if (inserted?.id) {
           const capitalResult = await syncExpenseCapital(inserted.id, capitalInput);
           toast.success(capitalResultMessage(capitalResult, 'added'));
-          recordAudit('add', 'Expenses', expenseAuditSummary(
-            'Added',
-            form.category,
-            Number(form.amount),
-            form.date,
-            useCard ? auditCardLabel(cardId, cardHolder) : '',
-          ));
+          recordAudit(
+            'add',
+            'Expenses',
+            expenseAuditSummary(
+              'Added',
+              form.category,
+              Number(form.amount),
+              form.date,
+              useCard ? auditCardLabel(cardId, cardHolder) : '',
+            ),
+            { type: 'expense', id: inserted.id },
+          );
         } else {
           toast.success('Expense added');
           recordAudit('add', 'Expenses', expenseAuditSummary('Added', form.category, Number(form.amount), form.date, ''));
@@ -776,9 +792,14 @@ export default function ExpensesPage() {
     if (linkMissing) toast.success('Expense deleted. Run supabase/capital_source_expense.sql in Supabase so Capital stays linked.');
     else if (keptPaid) toast.success('Expense deleted. The paid capital charge was kept.');
     else toast.success('Expense deleted');
-    recordAudit('delete', 'Expenses', exp
-      ? expenseAuditSummary('Deleted', exp.category, Number(exp.amount), exp.date, auditCardLabel(exp.card_id, exp.paid_by_person))
-      : `Deleted expense ${id}`);
+    recordAudit(
+      'delete',
+      'Expenses',
+      exp
+        ? expenseAuditSummary('Deleted', exp.category, Number(exp.amount), exp.date, auditCardLabel(exp.card_id, exp.paid_by_person))
+        : `Deleted expense ${id}`,
+      { type: 'expense', id },
+    );
     fetchExpenses();
   }
 
@@ -1099,6 +1120,7 @@ export default function ExpensesPage() {
                     </div>
                   </div>
                 )}
+                <EntityAuditHistory entityType="expense" entityId={viewingExpense.id} />
                 <div className="flex gap-2">
                   <Button
                     type="button"

@@ -88,7 +88,11 @@ CREATE TABLE IF NOT EXISTS credit_cards (
 );
 
 -- Unified Expenses
-CREATE TYPE expense_type AS ENUM ('vehicle', 'operational', 'personal', 'other');
+DO $$ BEGIN
+  CREATE TYPE expense_type AS ENUM ('vehicle', 'operational', 'personal', 'other');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS expenses (
   id SERIAL PRIMARY KEY,
@@ -182,15 +186,25 @@ ALTER TABLE expense_categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE credit_cards ENABLE ROW LEVEL SECURITY;
 
 -- Allow public access (no auth required for now)
+DROP POLICY IF EXISTS "Allow all on partners" ON partners;
 CREATE POLICY "Allow all on partners" ON partners FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on drivers" ON drivers;
 CREATE POLICY "Allow all on drivers" ON drivers FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on vehicles" ON vehicles;
 CREATE POLICY "Allow all on vehicles" ON vehicles FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on routes" ON routes;
 CREATE POLICY "Allow all on routes" ON routes FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on trips" ON trips;
 CREATE POLICY "Allow all on trips" ON trips FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on expenses" ON expenses;
 CREATE POLICY "Allow all on expenses" ON expenses FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on capital_contributions" ON capital_contributions;
 CREATE POLICY "Allow all on capital_contributions" ON capital_contributions FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on banking_information" ON banking_information;
 CREATE POLICY "Allow all on banking_information" ON banking_information FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on expense_categories" ON expense_categories;
 CREATE POLICY "Allow all on expense_categories" ON expense_categories FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow all on credit_cards" ON credit_cards;
 CREATE POLICY "Allow all on credit_cards" ON credit_cards FOR ALL USING (true) WITH CHECK (true);
 
 INSERT INTO credit_cards (holder, bank_name, network, last_four, label) VALUES

@@ -64,6 +64,9 @@ import { MAX_ENTITY_IMAGES, normalizeImageUrls } from '@/lib/image-urls';
 import { MultiImageField } from '@/components/multi-image-field';
 import { useSession, useSessionReady } from '@/components/session-provider';
 import { recordAudit } from '@/lib/audit-client';
+import { EntityAuditHistory } from '@/components/entity-audit-history';
+import { TripNotesPanel } from '@/components/trip-notes-panel';
+import { addTripNote } from '@/lib/trip-notes';
 
 const emptyTrip: TripFormData = {
   date: new Date().toISOString().split('T')[0],
@@ -752,7 +755,7 @@ export default function TripsPage() {
         }).eq('id', editingId);
         if (error) { toast.error(error.message); return; }
         toast.success('Trip updated');
-        recordAudit('edit', 'Trip Log', tripAuditLine('Updated', form));
+        recordAudit('edit', 'Trip Log', tripAuditLine('Updated', form), { type: 'trip', id: editingId });
       } else {
         const { data, error } = await supabase.from('trips').insert(payload).select('id').single();
         if (error) { toast.error(error.message); return; }
@@ -765,7 +768,13 @@ export default function TripsPage() {
           if (updateError) { toast.error(updateError.message); return; }
         }
         toast.success('Trip added');
-        recordAudit('add', 'Trip Log', tripAuditLine('Added', form));
+        recordAudit('add', 'Trip Log', tripAuditLine('Added', form), { type: 'trip', id: data?.id });
+        if (data?.id && form.notes.trim()) {
+          const actor = session?.name || session?.username || 'Unknown';
+          const noteResult = await addTripNote(data.id, form.notes, actor);
+          if (noteResult.error) toast.error('Trip saved but note failed: ' + noteResult.error);
+          else recordAudit('add', 'Trip Log', `Added note on trip #${data.id}`, { type: 'trip', id: data.id });
+        }
       }
       resetFormDialog();
       fetchTrips();
@@ -814,7 +823,7 @@ export default function TripsPage() {
     const { error } = await supabase.from('trips').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     toast.success('Trip deleted');
-    if (trip) recordAudit('delete', 'Trip Log', tripAuditLine('Deleted', trip));
+    if (trip) recordAudit('delete', 'Trip Log', tripAuditLine('Deleted', trip), { type: 'trip', id: id });
     fetchTrips();
   }
 
@@ -1388,10 +1397,7 @@ export default function TripsPage() {
                   </div>
                 )}
               </div>
-              <div>
-                <p className="text-[10px] uppercase text-gray-500">Notes</p>
-                <p className="text-sm text-gray-800 whitespace-pre-wrap">{viewingTrip.notes || '—'}</p>
-              </div>
+              <TripNotesPanel tripId={viewingTrip.id} />
               {tripBuiltyUrls(viewingTrip).length > 0 && (
                 <div>
                   <p className="text-[10px] uppercase text-gray-500 mb-1">
@@ -1412,6 +1418,7 @@ export default function TripsPage() {
                   </div>
                 </div>
               )}
+              <EntityAuditHistory entityType="trip" entityId={viewingTrip.id} />
               <div className="flex gap-2">
                 <Button
                   type="button"
@@ -1608,14 +1615,20 @@ export default function TripsPage() {
                   }}
                 />
               </div>
-              <div className="sm:col-span-2">
-                <Label>Notes</Label>
-                <Input
-                  value={form.notes}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                  placeholder="Optional"
-                />
-              </div>
+              {editingId ? (
+                <div className="sm:col-span-2">
+                  <TripNotesPanel tripId={editingId} />
+                </div>
+              ) : (
+                <div className="sm:col-span-2">
+                  <Label>First note (optional)</Label>
+                  <Input
+                    value={form.notes}
+                    onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                    placeholder="Saved as the first note after the trip is created"
+                  />
+                </div>
+              )}
             </div>
             <Button type="submit" className="w-full" disabled={saving}>
               {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</> : `${editingId ? 'Update' : 'Add'} Trip`}

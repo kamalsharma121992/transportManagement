@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "migrate": "node scripts/run-sql.mjs",
+    "migrate:all": "bash ./migrate.sh",
     "backup": "node scripts/backup.mjs"
   },
   "dependencies": {

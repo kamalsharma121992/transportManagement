@@ -22,6 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_credit_cards_active ON credit_cards(is_active);
 
 ALTER TABLE credit_cards ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Allow all on credit_cards" ON credit_cards;
 CREATE POLICY "Allow all on credit_cards" ON credit_cards FOR ALL USING (true) WITH CHECK (true);
 
 -- Nullable FKs — existing rows stay valid without a card

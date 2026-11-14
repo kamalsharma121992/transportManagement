@@ -48,10 +48,17 @@ CREATE TABLE IF NOT EXISTS audit_log (
   action TEXT NOT NULL,
   screen TEXT NOT NULL,
   summary TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id INTEGER,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Existing DBs may have audit_log without entity columns (CREATE TABLE IF NOT EXISTS won't add them)
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS entity_type TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS entity_id INTEGER;
+
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log (entity_type, entity_id, created_at DESC);
 
 ALTER TABLE app_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_roles ENABLE ROW LEVEL SECURITY;
@@ -253,7 +260,7 @@ BEGIN
   RETURN COALESCE((
     SELECT json_agg(row_to_json(t))
     FROM (
-      SELECT id, user_id, user_name, action, screen, summary, created_at
+      SELECT id, user_id, user_name, action, screen, summary, entity_type, entity_id, created_at
       FROM audit_log
       ORDER BY created_at DESC
       LIMIT LEAST(GREATEST(COALESCE(p_limit, 100), 1), 500)
@@ -262,13 +269,47 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION list_entity_audit_log(
+  p_gate text,
+  p_entity_type text,
+  p_entity_id integer,
+  p_limit integer DEFAULT 50
+)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  PERFORM app_require_gate(p_gate);
+  IF p_entity_type IS NULL OR btrim(p_entity_type) = '' OR p_entity_id IS NULL THEN
+    RETURN '[]'::json;
+  END IF;
+  RETURN COALESCE((
+    SELECT json_agg(row_to_json(t))
+    FROM (
+      SELECT id, user_id, user_name, action, screen, summary, entity_type, entity_id, created_at
+      FROM audit_log
+      WHERE entity_type = btrim(p_entity_type)
+        AND entity_id = p_entity_id
+      ORDER BY created_at DESC
+      LIMIT LEAST(GREATEST(COALESCE(p_limit, 50), 1), 200)
+    ) t
+  ), '[]'::json);
+END;
+$$;
+
+DROP FUNCTION IF EXISTS write_audit_log(text, integer, text, text, text, text);
+
 CREATE OR REPLACE FUNCTION write_audit_log(
   p_gate text,
   p_user_id integer,
   p_user_name text,
   p_action text,
   p_screen text,
-  p_summary text
+  p_summary text,
+  p_entity_type text DEFAULT NULL,
+  p_entity_id integer DEFAULT NULL
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -277,8 +318,16 @@ SET search_path = public
 AS $$
 BEGIN
   PERFORM app_require_gate(p_gate);
-  INSERT INTO audit_log (user_id, user_name, action, screen, summary)
-  VALUES (p_user_id, p_user_name, p_action, p_screen, left(COALESCE(p_summary, ''), 500));
+  INSERT INTO audit_log (user_id, user_name, action, screen, summary, entity_type, entity_id)
+  VALUES (
+    p_user_id,
+    p_user_name,
+    p_action,
+    p_screen,
+    left(COALESCE(p_summary, ''), 500),
+    NULLIF(btrim(COALESCE(p_entity_type, '')), ''),
+    p_entity_id
+  );
 END;
 $$;
 
@@ -288,7 +337,8 @@ GRANT EXECUTE ON FUNCTION save_app_user(text, integer, text, text, text, text, i
 GRANT EXECUTE ON FUNCTION list_app_roles(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION save_app_role(text, integer, text, text[]) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION list_audit_log(text, integer) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION write_audit_log(text, integer, text, text, text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION list_entity_audit_log(text, text, integer, integer) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION write_audit_log(text, integer, text, text, text, text, text, integer) TO anon, authenticated;
 
 INSERT INTO app_roles (name)
 VALUES ('Admin'), ('Account Manager'), ('Driver')
