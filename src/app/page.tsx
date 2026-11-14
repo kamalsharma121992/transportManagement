@@ -8,6 +8,7 @@ import {
   type DashboardStats,
   fetchDashboardCategoryExpenses,
   fetchDashboardStats,
+  fetchDashboardVehicleExpenses,
   getDashboardDateRange,
   mergeDailySeries,
 } from '@/lib/dashboard-stats';
@@ -74,23 +75,20 @@ function tripLogHref(
   return `/trips?${params.toString()}`;
 }
 
-function expensesCategoryHref(
-  category: string,
-  opts: {
-    month: string;
-    currentMonth: string;
-    from: string;
-    dateTo: string;
-    vehicles: string[];
-    entities: string[];
-    paidBy: string[];
-    persons: string[];
-    sources: string[];
-    q: string;
-  },
-) {
-  const params = new URLSearchParams();
-  params.set('categories', category);
+type ExpenseHrefOpts = {
+  month: string;
+  currentMonth: string;
+  from: string;
+  dateTo: string;
+  vehicles: string[];
+  entities: string[];
+  paidBy: string[];
+  persons: string[];
+  sources: string[];
+  q: string;
+};
+
+function applyExpenseHrefOpts(params: URLSearchParams, opts: ExpenseHrefOpts) {
   if (opts.month) {
     if (opts.month !== opts.currentMonth) params.set('month', opts.month);
   } else {
@@ -104,6 +102,20 @@ function expensesCategoryHref(
   if (opts.persons.length > 0) params.set('persons', opts.persons.join(','));
   if (opts.sources.length > 0) params.set('sources', opts.sources.join(','));
   if (opts.q) params.set('q', opts.q);
+}
+
+function expensesCategoryHref(category: string, opts: ExpenseHrefOpts) {
+  const params = new URLSearchParams();
+  params.set('categories', category);
+  applyExpenseHrefOpts(params, opts);
+  return `/expenses?${params.toString()}`;
+}
+
+function expensesVehicleHref(vehicle: string, opts: ExpenseHrefOpts) {
+  const params = new URLSearchParams();
+  params.set('vehicles', vehicle);
+  params.set('type', 'vehicle');
+  applyExpenseHrefOpts(params, { ...opts, vehicles: [vehicle] });
   return `/expenses?${params.toString()}`;
 }
 
@@ -134,9 +146,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const hasLoadedRef = useRef(false);
-  const [categorySheet, setCategorySheet] = useState<string | null>(null);
-  const [categoryExpenses, setCategoryExpenses] = useState<DashboardCategoryExpense[]>([]);
-  const [categoryLoading, setCategoryLoading] = useState(false);
+  const [expenseSheet, setExpenseSheet] = useState<{ kind: 'category' | 'vehicle'; key: string } | null>(null);
+  const [sheetExpenses, setSheetExpenses] = useState<DashboardCategoryExpense[]>([]);
+  const [sheetLoading, setSheetLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(() => Boolean(
     searchParams.get('from') || searchParams.get('dateTo') || searchParams.get('entities')
     || searchParams.get('paidBy') || searchParams.get('persons') || searchParams.get('vehicles')
@@ -285,34 +297,39 @@ export default function Dashboard() {
     filterPaidByEntities, filterPaidByPersons, filterPersons, filterPaymentSources, searchQuery,
   ]);
 
-  async function openCategoryDrilldown(category: string) {
-    if (!category) return;
-    setCategorySheet(category);
-    setCategoryLoading(true);
-    setCategoryExpenses([]);
-    const { data, error } = await fetchDashboardCategoryExpenses(dashboardFilters, category);
-    setCategoryLoading(false);
+  async function openExpenseDrilldown(kind: 'category' | 'vehicle', key: string) {
+    if (!key) return;
+    setExpenseSheet({ kind, key });
+    setSheetLoading(true);
+    setSheetExpenses([]);
+    const { data, error } = kind === 'category'
+      ? await fetchDashboardCategoryExpenses(dashboardFilters, key)
+      : await fetchDashboardVehicleExpenses(dashboardFilters, key);
+    setSheetLoading(false);
     if (error) {
       toast.error('Failed to load expenses: ' + error);
       return;
     }
-    setCategoryExpenses(data);
+    setSheetExpenses(data);
   }
 
-  const categorySheetTotal = categoryExpenses.reduce((s, e) => s + Number(e.amount), 0);
-  const categoryExpensesHref = categorySheet
-    ? expensesCategoryHref(categorySheet, {
-        month: filterMonth,
-        currentMonth,
-        from: filterDateFrom,
-        dateTo: filterDateTo,
-        vehicles: filterVehicles,
-        entities: filterPaidByEntities,
-        paidBy: filterPaidByPersons,
-        persons: filterPersons,
-        sources: filterPaymentSources,
-        q: searchQuery,
-      })
+  const sheetHrefOpts: ExpenseHrefOpts = {
+    month: filterMonth,
+    currentMonth,
+    from: filterDateFrom,
+    dateTo: filterDateTo,
+    vehicles: filterVehicles,
+    entities: filterPaidByEntities,
+    paidBy: filterPaidByPersons,
+    persons: filterPersons,
+    sources: filterPaymentSources,
+    q: searchQuery,
+  };
+  const sheetTotal = sheetExpenses.reduce((s, e) => s + Number(e.amount), 0);
+  const sheetExpensesHref = expenseSheet
+    ? expenseSheet.kind === 'category'
+      ? expensesCategoryHref(expenseSheet.key, sheetHrefOpts)
+      : expensesVehicleHref(expenseSheet.key, sheetHrefOpts)
     : '/expenses';
 
   const periodLabel = filterMonth
@@ -575,7 +592,7 @@ export default function Dashboard() {
                     onClick={(data) => {
                       const row = data as { name?: string; payload?: { name?: string } };
                       const name = row?.name || row?.payload?.name;
-                      if (name) void openCategoryDrilldown(name);
+                      if (name) void openExpenseDrilldown('category', name);
                     }}
                   >
                     {stats.categoryBreakdown.map((_, i) => (
@@ -590,11 +607,11 @@ export default function Dashboard() {
                   <button
                     key={item.name}
                     type="button"
-                    onClick={() => void openCategoryDrilldown(item.name)}
+                    onClick={() => void openExpenseDrilldown('category', item.name)}
                     className={cn(
                       'flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left text-sm',
                       'hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-                      categorySheet === item.name && 'bg-blue-50',
+                      expenseSheet?.kind === 'category' && expenseSheet.key === item.name && 'bg-blue-50',
                     )}
                   >
                     <div className="flex min-w-0 items-center gap-2">
@@ -622,13 +639,32 @@ export default function Dashboard() {
           <CardTitle className="text-lg">Vehicle-wise Expenses</CardTitle>
         </CardHeader>
         <CardContent>
+          <p className="mb-3 text-xs text-gray-500">Click a bar to see expenses for that vehicle</p>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={stats.vehicleExpenses}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="vehicle" fontSize={12} />
               <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} fontSize={12} />
               <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-              <Bar dataKey="amount" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+              <Bar
+                dataKey="amount"
+                fill="#3b82f6"
+                radius={[4, 4, 0, 0]}
+                cursor="pointer"
+                onClick={(data) => {
+                  const row = data as { vehicle?: string; payload?: { vehicle?: string } };
+                  const vehicle = row?.vehicle || row?.payload?.vehicle;
+                  if (vehicle) void openExpenseDrilldown('vehicle', vehicle);
+                }}
+              >
+                {stats.vehicleExpenses.map((item) => (
+                  <Cell
+                    key={item.vehicle}
+                    fill={expenseSheet?.kind === 'vehicle' && expenseSheet.key === item.vehicle ? '#1d4ed8' : '#3b82f6'}
+                    className="cursor-pointer outline-none"
+                  />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </CardContent>
@@ -636,40 +672,46 @@ export default function Dashboard() {
       </div>
       )}
 
-      <Dialog open={categorySheet != null} onOpenChange={(open) => { if (!open) setCategorySheet(null); }}>
+      <Dialog open={expenseSheet != null} onOpenChange={(open) => { if (!open) setExpenseSheet(null); }}>
         <DialogContent
           className={cn(
             'fixed inset-y-0 right-0 left-auto top-0 z-50 flex h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-l p-0 sm:max-w-md sm:rounded-l-xl',
             'data-open:zoom-in-100 data-closed:zoom-out-100 data-open:slide-in-from-right data-closed:slide-out-to-right',
           )}
         >
-          {categorySheet && (
+          {expenseSheet && (
             <>
               <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:px-5">
-                <DialogTitle className="truncate">{categorySheet}</DialogTitle>
+                <DialogTitle className="truncate">
+                  {expenseSheet.kind === 'vehicle' ? `Vehicle ${expenseSheet.key}` : expenseSheet.key}
+                </DialogTitle>
                 <p className="text-sm text-gray-500">
                   {periodLabel}
-                  {!categoryLoading && (
+                  {!sheetLoading && (
                     <>
                       {' · '}
-                      {categoryExpenses.length} expense{categoryExpenses.length === 1 ? '' : 's'}
+                      {sheetExpenses.length} expense{sheetExpenses.length === 1 ? '' : 's'}
                       {' · '}
-                      <span className="font-medium text-red-600">{formatCurrency(categorySheetTotal)}</span>
+                      <span className="font-medium text-red-600">{formatCurrency(sheetTotal)}</span>
                     </>
                   )}
                 </p>
               </DialogHeader>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
-                {categoryLoading ? (
+                {sheetLoading ? (
                   <div className="flex items-center gap-2 py-8 text-sm text-gray-500">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading expenses...
                   </div>
-                ) : categoryExpenses.length === 0 ? (
-                  <p className="py-8 text-sm text-gray-500">No expenses in this category for the current filters.</p>
+                ) : sheetExpenses.length === 0 ? (
+                  <p className="py-8 text-sm text-gray-500">
+                    {expenseSheet.kind === 'vehicle'
+                      ? 'No vehicle expenses for this vehicle under the current filters.'
+                      : 'No expenses in this category for the current filters.'}
+                  </p>
                 ) : (
                   <ul className="space-y-2">
-                    {categoryExpenses.map((exp) => (
+                    {sheetExpenses.map((exp) => (
                       <li key={exp.id} className="rounded-lg border bg-white px-3 py-2.5 text-sm">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -679,7 +721,7 @@ export default function Dashboard() {
                             </p>
                             <p className="mt-1 truncate text-xs text-gray-500">
                               {[
-                                exp.vehicle_number,
+                                expenseSheet.kind === 'category' ? exp.vehicle_number : exp.category,
                                 exp.paid_by_person && `Paid by ${exp.paid_by_person}`,
                                 exp.person && `Given to ${exp.person}`,
                                 exp.payment_source,
@@ -690,7 +732,7 @@ export default function Dashboard() {
                         </div>
                       </li>
                     ))}
-                    {categoryExpenses.length >= 100 && (
+                    {sheetExpenses.length >= 100 && (
                       <p className="pt-1 text-xs text-gray-500">Showing first 100. Open Expenses for the full list.</p>
                     )}
                   </ul>
@@ -698,10 +740,10 @@ export default function Dashboard() {
               </div>
 
               <div className="flex shrink-0 gap-2 border-t bg-white px-4 py-3 sm:px-5">
-                <Link href={categoryExpensesHref} className={cn(buttonVariants(), 'flex-1')}>
+                <Link href={sheetExpensesHref} className={cn(buttonVariants(), 'flex-1')}>
                   <ExternalLink className="mr-2 h-4 w-4" /> Open in Expenses
                 </Link>
-                <Button type="button" variant="outline" className="flex-1" onClick={() => setCategorySheet(null)}>
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setExpenseSheet(null)}>
                   Close
                 </Button>
               </div>

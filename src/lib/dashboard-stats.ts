@@ -406,3 +406,25 @@ export async function fetchDashboardCategoryExpenses(
   return { data: (data || []) as DashboardCategoryExpense[], error: null };
 }
 
+/** Vehicle-type expenses for one vehicle bar, using the same dashboard filters. */
+export async function fetchDashboardVehicleExpenses(
+  filters: DashboardFilterParams,
+  vehicle: string,
+): Promise<{ data: DashboardCategoryExpense[]; error: string | null }> {
+  let query = applyDashboardExpenseFilters(
+    supabase
+      .from('expenses')
+      .select('id, date, amount, category, description, vehicle_number, paid_by_person, person, payment_source, status')
+      .eq('expense_type', 'vehicle')
+      .eq('vehicle_number', vehicle)
+      .order('date', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(100),
+    filters,
+  );
+
+  const { data, error } = await query;
+  if (error) return { data: [], error: error.message };
+  return { data: (data || []) as DashboardCategoryExpense[], error: null };
+}
+
