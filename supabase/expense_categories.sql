@@ -23,7 +23,7 @@ INSERT INTO expense_categories (name, expense_type, sort_order) VALUES
   ('Insurance', 'vehicle', 4),
   ('EMI / Loan Payments', 'vehicle', 5),
   ('Driver Salary', 'vehicle', 6),
-  ('Others', 'vehicle', 7),
+  ('Other', 'vehicle', 7),
   ('Meals', 'operational', 1),
   ('Hotel Stay', 'operational', 2),
   ('Rent', 'operational', 3),

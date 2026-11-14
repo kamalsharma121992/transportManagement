@@ -66,8 +66,9 @@ import { useSession, useSessionReady } from '@/components/session-provider';
 import { recordAudit } from '@/lib/audit-client';
 import { EntityAuditHistory } from '@/components/entity-audit-history';
 import { TripNotesPanel } from '@/components/trip-notes-panel';
+import { MultiEntryPreview } from '@/components/multi-entry-preview';
 import { confirmAction } from '@/components/confirm-dialog';
-import { addTripNote } from '@/lib/trip-notes';
+import { addTripNote, fetchTripNotesByTripIds, type TripNote } from '@/lib/trip-notes';
 
 const emptyTrip: TripFormData = {
   date: new Date().toISOString().split('T')[0],
@@ -121,6 +122,7 @@ export default function TripsPage() {
   const sessionReady = useSessionReady();
   const lockedDriver = session?.role === 'Driver' ? session.driverName : null;
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [tripNotesById, setTripNotesById] = useState<Record<number, TripNote[]>>({});
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [drivers, setDrivers] = useState<string[]>([]);
   const [routes, setRoutes] = useState<{ route_name: string; origin: string; destination: string; distance_km: number; standard_rate_per_ton: number; commission: number }[]>([]);
@@ -289,7 +291,8 @@ export default function TripsPage() {
       advance_paid: number;
       balance_due: number;
     }[];
-    setTrips(data || []);
+    const tripRows = (data || []) as Trip[];
+    setTrips(tripRows);
     setTotalTrips(count ?? 0);
     const payments = tripPaymentAmounts(rows);
     setSummary({
@@ -300,7 +303,30 @@ export default function TripsPage() {
       paidRevenue: payments.collectedRevenue,
       writtenOffRevenue: payments.writtenOffRevenue,
     });
+    const { data: notesMap } = await fetchTripNotesByTripIds(tripRows.map((t) => t.id));
+    setTripNotesById(notesMap);
     setLoading(false);
+  }
+
+  function tripNoteEntries(trip: Trip) {
+    const rows = tripNotesById[trip.id];
+    if (rows && rows.length > 0) {
+      return rows.map((n) => ({
+        id: n.id,
+        text: n.note,
+        createdBy: n.created_by,
+        createdAt: n.created_at,
+      }));
+    }
+    if (trip.notes?.trim()) {
+      return [{
+        id: trip.id,
+        text: trip.notes,
+        createdBy: '—',
+        createdAt: trip.date,
+      }];
+    }
+    return [];
   }
 
   async function fetchAllFilteredTrips(selectCols: string = TRIP_EXPORT_SELECT): Promise<Trip[]> {
@@ -729,15 +755,17 @@ export default function TripsPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      const { builty_url: _builty, ...formRest } = form;
+      const { builty_url: _builty, notes, ...formRest } = form;
       void _builty;
+      const firstNote = notes.trim();
       const payload = {
         ...formRest,
         payment_expected_date:
           form.payment_status === 'Pending' ? form.payment_expected_date || null : null,
-        notes: form.notes.trim() || null,
         builty_urls: builtyUrls,
         builty_url: builtyUrls[0] || null,
+        // Notes timeline owns this after create; only set on insert
+        ...(editingId ? {} : { notes: firstNote || null }),
       };
 
       if (editingId) {
@@ -770,9 +798,9 @@ export default function TripsPage() {
         }
         toast.success('Trip added');
         recordAudit('add', 'Trip Log', tripAuditLine('Added', form), { type: 'trip', id: data?.id });
-        if (data?.id && form.notes.trim()) {
+        if (data?.id && firstNote) {
           const actor = session?.name || session?.username || 'Unknown';
-          const noteResult = await addTripNote(data.id, form.notes, actor);
+          const noteResult = await addTripNote(data.id, firstNote, actor);
           if (noteResult.error) toast.error('Trip saved but note failed: ' + noteResult.error);
           else recordAudit('add', 'Trip Log', `Added note on trip #${data.id}`, { type: 'trip', id: data.id });
         }
@@ -806,7 +834,7 @@ export default function TripsPage() {
       balance_due: Number(trip.balance_due),
       payment_status: normalizeTripPaymentStatus(trip.payment_status),
       payment_expected_date: trip.payment_expected_date || '',
-      notes: trip.notes || '',
+      notes: '',
       builty_url: urls[0] || '',
     };
     setForm(next);
@@ -1723,7 +1751,7 @@ export default function TripsPage() {
                     <Input
                       value={form.notes}
                       onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                      placeholder="Saved as the first note after the trip is created"
+                      placeholder="Saved as the first note; more can be added later"
                     />
                   </section>
                 )}
@@ -1849,8 +1877,10 @@ export default function TripsPage() {
                         <p className="text-xs text-gray-500 mt-0.5">{formatDate(trip.date)}</p>
                         <p className="mt-1 text-sm text-gray-700 truncate">{trip.route_name}</p>
                         <p className="text-sm text-gray-600 truncate">{trip.driver_name}</p>
-                        {trip.notes && (
-                          <p className="text-xs text-gray-500 mt-1 line-clamp-2">{trip.notes}</p>
+                        {tripNoteEntries(trip).length > 0 && (
+                          <div className="mt-1" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                            <MultiEntryPreview entries={tripNoteEntries(trip)} className="max-w-full text-xs" />
+                          </div>
                         )}
                       </div>
                       <div className="shrink-0 text-right space-y-1">
@@ -1922,10 +1952,10 @@ export default function TripsPage() {
                             </div>
                           </div>
                         )}
-                        {trip.notes && (
+                        {tripNoteEntries(trip).length > 0 && (
                           <div className="col-span-2">
-                            <p className="text-[10px] uppercase text-gray-500">Notes</p>
-                            <p className="font-medium text-gray-800 whitespace-pre-wrap">{trip.notes}</p>
+                            <p className="mb-1 text-[10px] uppercase text-gray-500">Notes</p>
+                            <MultiEntryPreview entries={tripNoteEntries(trip)} className="max-w-full" />
                           </div>
                         )}
                       </div>
@@ -2004,7 +2034,7 @@ export default function TripsPage() {
                   <TableHead className="text-right">Pending</TableHead>
                   <TableHead>Payment</TableHead>
                   <TableHead>Builty</TableHead>
-                  <TableHead>Notes</TableHead>
+                  <TableHead>Latest note</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
@@ -2061,8 +2091,8 @@ export default function TripsPage() {
                         </div>
                       </TableCell>
                       <TableCell>{renderBuiltyButton(trip)}</TableCell>
-                      <TableCell className="max-w-[180px] text-sm text-gray-600 truncate" title={trip.notes || undefined}>
-                        {trip.notes || '—'}
+                      <TableCell className="max-w-[220px]">
+                        <MultiEntryPreview entries={tripNoteEntries(trip)} />
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">

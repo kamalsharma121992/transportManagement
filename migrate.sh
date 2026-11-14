@@ -58,6 +58,7 @@ MIGRATIONS=(
   "supabase/trip_notes.sql"
   "supabase/expense_notes.sql"
   "supabase/expense_descriptions.sql"
+  "supabase/unify_other_category.sql"
   "supabase/routes_commission.sql"
   "supabase/trip_builty.sql"
   "supabase/expense_image.sql"

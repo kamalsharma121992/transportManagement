@@ -27,6 +27,35 @@ export async function fetchTripNotes(tripId: number): Promise<{ data: TripNote[]
   return { data: (data || []) as TripNote[], error: null };
 }
 
+/** Batch-load notes for a page of trips (latest-first per trip). */
+export async function fetchTripNotesByTripIds(
+  tripIds: number[],
+): Promise<{ data: Record<number, TripNote[]>; error: string | null }> {
+  const unique = [...new Set(tripIds.filter((id) => Number.isFinite(id)))];
+  if (unique.length === 0) return { data: {}, error: null };
+
+  const { data, error } = await getSupabase()
+    .from('trip_notes')
+    .select('id, trip_id, note, created_by, created_at, updated_by, updated_at')
+    .in('trip_id', unique)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false });
+
+  if (error) {
+    if (error.message.includes('trip_notes') || error.message.includes('schema cache')) {
+      return { data: {}, error: null };
+    }
+    return { data: {}, error: error.message };
+  }
+
+  const map: Record<number, TripNote[]> = {};
+  for (const id of unique) map[id] = [];
+  for (const row of (data || []) as TripNote[]) {
+    (map[row.trip_id] ||= []).push(row);
+  }
+  return { data: map, error: null };
+}
+
 export async function addTripNote(
   tripId: number,
   note: string,

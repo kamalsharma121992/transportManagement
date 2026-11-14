@@ -27,6 +27,35 @@ export async function fetchExpenseNotes(expenseId: number): Promise<{ data: Expe
   return { data: (data || []) as ExpenseNote[], error: null };
 }
 
+/** Batch-load descriptions for a page of expenses (latest-first per expense). */
+export async function fetchExpenseNotesByExpenseIds(
+  expenseIds: number[],
+): Promise<{ data: Record<number, ExpenseNote[]>; error: string | null }> {
+  const unique = [...new Set(expenseIds.filter((id) => Number.isFinite(id)))];
+  if (unique.length === 0) return { data: {}, error: null };
+
+  const { data, error } = await getSupabase()
+    .from('expense_notes')
+    .select('id, expense_id, note, created_by, created_at, updated_by, updated_at')
+    .in('expense_id', unique)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false });
+
+  if (error) {
+    if (error.message.includes('expense_notes') || error.message.includes('schema cache')) {
+      return { data: {}, error: null };
+    }
+    return { data: {}, error: error.message };
+  }
+
+  const map: Record<number, ExpenseNote[]> = {};
+  for (const id of unique) map[id] = [];
+  for (const row of (data || []) as ExpenseNote[]) {
+    (map[row.expense_id] ||= []).push(row);
+  }
+  return { data: map, error: null };
+}
+
 export async function addExpenseNote(
   expenseId: number,
   note: string,

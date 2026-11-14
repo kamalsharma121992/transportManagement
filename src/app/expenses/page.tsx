@@ -51,8 +51,9 @@ import { applySupabaseSort } from '@/lib/sort';
 import { recordAudit } from '@/lib/audit-client';
 import { EntityAuditHistory } from '@/components/entity-audit-history';
 import { ExpenseDescriptionsPanel } from '@/components/expense-descriptions-panel';
+import { MultiEntryPreview } from '@/components/multi-entry-preview';
 import { confirmAction } from '@/components/confirm-dialog';
-import { addExpenseNote } from '@/lib/expense-notes';
+import { addExpenseNote, fetchExpenseNotesByExpenseIds, type ExpenseNote } from '@/lib/expense-notes';
 import { useSession } from '@/components/session-provider';
 import { useTableSort } from '@/hooks/use-table-sort';
 import { readMonthParam, readSortParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
@@ -131,6 +132,7 @@ export default function ExpensesPage() {
   const searchParams = useSearchParams();
   const session = useSession();
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [expenseNotesById, setExpenseNotesById] = useState<Record<number, ExpenseNote[]>>({});
   const [vehicles, setVehicles] = useState<string[]>([]);
   const [partners, setPartners] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -262,14 +264,38 @@ export default function ExpensesPage() {
     if (error) { toast.error('Failed to load expenses: ' + error.message); setLoading(false); return; }
     if (summaryError) { toast.error('Failed to load expense summary: ' + summaryError.message); }
 
-    setExpenses(data || []);
+    const expenseRows = (data || []) as Expense[];
+    setExpenses(expenseRows);
     setTotalExpenses(count ?? 0);
     setSummary({
       total: (summaryRows || []).reduce((sum, e) => sum + Number(e.amount), 0),
       jmTotal: (summaryRows || []).filter((e) => e.paid_by === 'JM transport').reduce((s, e) => s + Number(e.amount), 0),
       maheshTotal: (summaryRows || []).filter((e) => e.paid_by === 'Mahesh').reduce((s, e) => s + Number(e.amount), 0),
     });
+    const { data: notesMap } = await fetchExpenseNotesByExpenseIds(expenseRows.map((e) => e.id));
+    setExpenseNotesById(notesMap);
     setLoading(false);
+  }
+
+  function expenseDescriptionEntries(exp: Expense) {
+    const rows = expenseNotesById[exp.id];
+    if (rows && rows.length > 0) {
+      return rows.map((n) => ({
+        id: n.id,
+        text: n.note,
+        createdBy: n.created_by,
+        createdAt: n.created_at,
+      }));
+    }
+    if (exp.description?.trim()) {
+      return [{
+        id: exp.id,
+        text: exp.description,
+        createdBy: '—',
+        createdAt: exp.date,
+      }];
+    }
+    return [];
   }
 
   async function fetchAllFilteredExpenses(): Promise<Expense[]> {
@@ -1526,10 +1552,10 @@ export default function ExpensesPage() {
                         <p className="text-base font-bold text-red-600">{formatCurrency(Number(exp.amount))}</p>
                       </div>
                     </div>
-                    {exp.description && (
-                      <p className={cn('text-sm text-gray-600', !expanded && 'line-clamp-1')}>
-                        {exp.description}
-                      </p>
+                    {expenseDescriptionEntries(exp).length > 0 && (
+                      <div className="mt-0.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                        <MultiEntryPreview entries={expenseDescriptionEntries(exp)} className="max-w-full" />
+                      </div>
                     )}
                     <div className="flex items-center justify-between text-xs text-gray-400">
                       <span>{expanded ? 'Hide details' : 'Tap for details'}</span>
@@ -1656,7 +1682,7 @@ export default function ExpensesPage() {
                   <TableHead>Vehicle</TableHead>
                   <TableHead>Category</TableHead>
                   <SortableTableHead label="Amount" column="amount" activeColumn={sortColumn} direction={sortDirection} onSort={toggleSort} className="text-right" />
-                  <TableHead>Description</TableHead>
+                  <TableHead>Latest description</TableHead>
                   <TableHead>Paid By</TableHead>
                   <TableHead>Given To</TableHead>
                   <TableHead>Paid From</TableHead>
@@ -1696,7 +1722,9 @@ export default function ExpensesPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-medium text-red-600 whitespace-nowrap">{formatCurrency(Number(exp.amount))}</TableCell>
-                      <TableCell className="max-w-[180px] truncate">{exp.description}</TableCell>
+                      <TableCell className="max-w-[220px]">
+                        <MultiEntryPreview entries={expenseDescriptionEntries(exp)} />
+                      </TableCell>
                       <TableCell className="whitespace-nowrap">{exp.paid_by_person || <span className="text-gray-300">-</span>}</TableCell>
                       <TableCell className="whitespace-nowrap">{exp.person || <span className="text-gray-300">-</span>}</TableCell>
                       <TableCell>

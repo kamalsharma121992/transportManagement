@@ -371,3 +371,38 @@ export async function fetchDashboardStats(
 
   return fetchDashboardStatsFallback(filters);
 }
+
+export type DashboardCategoryExpense = {
+  id: number;
+  date: string;
+  amount: number;
+  category: string;
+  description: string | null;
+  vehicle_number: string | null;
+  paid_by_person: string | null;
+  person: string | null;
+  payment_source: string | null;
+  status: string | null;
+};
+
+/** Expenses for one pie category, using the same dashboard filters. */
+export async function fetchDashboardCategoryExpenses(
+  filters: DashboardFilterParams,
+  category: string,
+): Promise<{ data: DashboardCategoryExpense[]; error: string | null }> {
+  let query = applyDashboardExpenseFilters(
+    supabase
+      .from('expenses')
+      .select('id, date, amount, category, description, vehicle_number, paid_by_person, person, payment_source, status')
+      .eq('category', category)
+      .order('date', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(100),
+    filters,
+  );
+
+  const { data, error } = await query;
+  if (error) return { data: [], error: error.message };
+  return { data: (data || []) as DashboardCategoryExpense[], error: null };
+}
+

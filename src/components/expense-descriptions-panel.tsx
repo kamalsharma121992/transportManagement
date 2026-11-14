@@ -39,6 +39,13 @@ function formatWhen(iso: string) {
   }
 }
 
+function sortLatestFirst(rows: ExpenseNote[]) {
+  return rows.slice().sort((a, b) => {
+    const t = b.created_at.localeCompare(a.created_at);
+    return t !== 0 ? t : b.id - a.id;
+  });
+}
+
 export function ExpenseDescriptionsPanel({
   expenseId,
   className,
@@ -62,7 +69,7 @@ export function ExpenseDescriptionsPanel({
   async function load() {
     setLoading(true);
     const { data, error: err } = await fetchExpenseNotes(expenseId);
-    setItems(data);
+    setItems(sortLatestFirst(data));
     setError(err);
     setLoading(false);
   }
@@ -82,7 +89,7 @@ export function ExpenseDescriptionsPanel({
     }
     if (data) {
       setItems((prev) => {
-        const next = [data, ...prev];
+        const next = sortLatestFirst([data, ...prev]);
         void syncDescriptionPreview(expenseId, next[0]?.note || null);
         return next;
       });
@@ -103,12 +110,8 @@ export function ExpenseDescriptionsPanel({
     }
     if (data) {
       setItems((prev) => {
-        const next = prev.map((n) => (n.id === noteId ? data : n));
-        const latest = next.slice().sort((a, b) => {
-          const t = b.created_at.localeCompare(a.created_at);
-          return t !== 0 ? t : b.id - a.id;
-        })[0];
-        void syncDescriptionPreview(expenseId, latest?.note || null);
+        const next = sortLatestFirst(prev.map((n) => (n.id === noteId ? data : n)));
+        void syncDescriptionPreview(expenseId, next[0]?.note || null);
         return next;
       });
       setEditingId(null);
@@ -133,7 +136,7 @@ export function ExpenseDescriptionsPanel({
       return;
     }
     setItems((prev) => {
-      const next = prev.filter((n) => n.id !== noteId);
+      const next = sortLatestFirst(prev.filter((n) => n.id !== noteId));
       void syncDescriptionPreview(expenseId, next[0]?.note || null);
       return next;
     });
@@ -147,7 +150,14 @@ export function ExpenseDescriptionsPanel({
 
   return (
     <div className={cn('space-y-3', className)}>
-      <p className="text-[10px] uppercase tracking-wide text-gray-500">Descriptions</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] uppercase tracking-wide text-gray-500">Descriptions</p>
+        {items.length > 0 && (
+          <span className="rounded-full bg-gray-200/80 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+            {items.length}
+          </span>
+        )}
+      </div>
 
       <div className="space-y-2">
         <Label className="sr-only">Add description</Label>
@@ -180,88 +190,117 @@ export function ExpenseDescriptionsPanel({
       ) : error ? (
         <p className="text-sm text-amber-700">{error}</p>
       ) : items.length === 0 ? (
-        <p className="text-sm text-gray-500">No descriptions yet.</p>
+        <p className="text-sm text-gray-500">No descriptions yet. Add the first one above.</p>
       ) : (
-        <ul className={cn('max-h-56 space-y-2 overflow-y-auto', listClassName)}>
-          {items.map((n) => (
-            <li key={n.id} className="rounded-md border bg-gray-50 px-3 py-2 text-sm">
-              {editingId === n.id ? (
-                <div className="space-y-2">
-                  <textarea
-                    className="min-h-[64px] w-full rounded-md border bg-white px-2 py-1.5 text-sm"
-                    value={editDraft}
-                    onChange={(e) => setEditDraft(e.target.value)}
-                    disabled={saving}
+        <ul className={cn('max-h-72 space-y-0 overflow-y-auto pr-0.5', listClassName)}>
+          {items.map((n, index) => {
+            const isLatest = index === 0;
+            const isLast = index === items.length - 1;
+            return (
+              <li key={n.id} className="relative flex gap-3">
+                <div className="flex w-3 shrink-0 flex-col items-center">
+                  <span
+                    className={cn(
+                      'mt-2 size-2.5 shrink-0 rounded-full ring-2 ring-white',
+                      isLatest ? 'bg-emerald-500' : 'bg-gray-300',
+                    )}
+                    aria-hidden
                   />
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="flex-1"
-                      disabled={saving || !editDraft.trim()}
-                      onClick={() => void handleSaveEdit(n.id)}
-                    >
-                      Save
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="flex-1"
-                      disabled={saving}
-                      onClick={() => { setEditingId(null); setEditDraft(''); }}
-                    >
-                      <X className="mr-1 h-3.5 w-3.5" /> Cancel
-                    </Button>
-                  </div>
+                  {!isLast && <span className="mt-1 w-px flex-1 bg-gray-200" aria-hidden />}
                 </div>
-              ) : (
-                <>
-                  <p className="whitespace-pre-wrap text-gray-900">{n.note}</p>
-                  <div className="mt-1.5 flex items-start justify-between gap-2">
-                    <div className="space-y-0.5 text-[11px] text-gray-500">
-                      <p>
-                        Added by <span className="font-medium text-gray-700">{n.created_by}</span>
-                        {' · '}
-                        {formatWhen(n.created_at)}
-                      </p>
-                      {n.updated_at && n.updated_by && (
+
+                <div
+                  className={cn(
+                    'mb-3 min-w-0 flex-1 rounded-lg border px-3 py-2.5 text-sm',
+                    isLatest ? 'border-emerald-200 bg-emerald-50/60' : 'border-gray-200 bg-white',
+                  )}
+                >
+                  {editingId === n.id ? (
+                    <div className="space-y-2">
+                      <textarea
+                        className="min-h-[64px] w-full rounded-md border bg-white px-2 py-1.5 text-sm"
+                        value={editDraft}
+                        onChange={(e) => setEditDraft(e.target.value)}
+                        disabled={saving}
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="flex-1"
+                          disabled={saving || !editDraft.trim()}
+                          onClick={() => void handleSaveEdit(n.id)}
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          disabled={saving}
+                          onClick={() => { setEditingId(null); setEditDraft(''); }}
+                        >
+                          <X className="mr-1 h-3.5 w-3.5" /> Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-2">
+                        {isLatest ? (
+                          <span className="inline-flex rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+                            Latest
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-gray-400">Earlier</span>
+                        )}
+                        <div className="flex shrink-0 gap-0.5">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Edit description"
+                            disabled={saving}
+                            onClick={() => { setEditingId(n.id); setEditDraft(n.note); }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Delete description"
+                            disabled={saving}
+                            onClick={() => void handleDelete(n.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="mt-1.5 whitespace-pre-wrap text-gray-900">{n.note}</p>
+                      <div className="mt-1.5 space-y-0.5 text-[11px] text-gray-500">
                         <p>
-                          Edited by <span className="font-medium text-gray-700">{n.updated_by}</span>
+                          Added by <span className="font-medium text-gray-700">{n.created_by}</span>
                           {' · '}
-                          {formatWhen(n.updated_at)}
+                          {formatWhen(n.created_at)}
                         </p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 gap-0.5">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        title="Edit description"
-                        disabled={saving}
-                        onClick={() => { setEditingId(n.id); setEditDraft(n.note); }}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        title="Delete description"
-                        disabled={saving}
-                        onClick={() => void handleDelete(n.id)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                      </Button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </li>
-          ))}
+                        {n.updated_at && n.updated_by && (
+                          <p>
+                            Edited by <span className="font-medium text-gray-700">{n.updated_by}</span>
+                            {' · '}
+                            {formatWhen(n.updated_at)}
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

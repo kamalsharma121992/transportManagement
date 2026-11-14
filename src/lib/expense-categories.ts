@@ -14,7 +14,7 @@ export type ExpenseCategory = {
 };
 
 export const DEFAULT_CATEGORIES_BY_TYPE: Record<ExpenseType, string[]> = {
-  vehicle: ['Fuel (Diesel)', 'Toll Taxes', 'Maintenance', 'Insurance', 'EMI / Loan Payments', 'Driver Salary', 'Others'],
+  vehicle: ['Fuel (Diesel)', 'Toll Taxes', 'Maintenance', 'Insurance', 'EMI / Loan Payments', 'Driver Salary', 'Other'],
   operational: ['Meals', 'Hotel Stay', 'Rent', 'Supplies', 'Daily Allowance', 'Advance', 'Salary', 'Partner Allowance', 'Office Expense', 'Credit Card Payment', 'Expense Advance', 'Other'],
   personal: ['Personal Care', 'Other'],
   other: ['Other'],
