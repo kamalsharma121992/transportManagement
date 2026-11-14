@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { supabase, Trip, TRIP_PAYMENT_STATUSES, type TripPaymentStatus } from '@/lib/supabase';
 import { formatCurrency, formatDate, getMonthFilterOptions, getMonthDateRange, FILTER_SELECT_CLASS } from '@/lib/format';
 import {
@@ -198,6 +198,24 @@ export default function TripsPage() {
     setFilterPaymentStatuses([]);
     setSearchInput('');
   }
+
+  function samePaymentFilter(statuses: readonly string[]) {
+    return (
+      filterPaymentStatuses.length === statuses.length
+      && statuses.every((s) => filterPaymentStatuses.includes(s))
+    );
+  }
+
+  /** Click summary / badge → filter to that payment status only (toggle off if already set). */
+  function filterByPaymentOnly(statuses: string[]) {
+    setFilterPaymentStatuses(samePaymentFilter(statuses) ? [] : statuses);
+  }
+
+  const paymentSummaryActive = {
+    pending: samePaymentFilter(['Pending', 'Partial Pending']),
+    collected: samePaymentFilter(['Fully Paid']),
+    writtenOff: samePaymentFilter(['Will not pay']),
+  };
 
   const activeFilterLabels: string[] = [];
   if (filterMonth) {
@@ -865,40 +883,63 @@ export default function TripsPage() {
   const readyCount = parsedTrips.filter((r) => r.complete).length;
 
   function renderPaymentBadge(trip: Trip) {
+    const badgeBtn = (statuses: string[], className: string, label: string, icon: ReactNode) => (
+      <button
+        type="button"
+        title={`Filter: ${statuses.join(', ')}`}
+        className={cn(
+          'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-shadow hover:ring-2 hover:ring-offset-1',
+          className,
+        )}
+        onClick={(e) => {
+          e.stopPropagation();
+          filterByPaymentOnly(statuses);
+        }}
+      >
+        {icon}
+        {label}
+      </button>
+    );
+
     if (trip.payment_status === 'Fully Paid') {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800">
-          <CheckCircle2 className="h-3 w-3" /> Fully Paid
-        </span>
+      return badgeBtn(
+        ['Fully Paid'],
+        'bg-green-100 text-green-800 hover:ring-green-300',
+        'Fully Paid',
+        <CheckCircle2 className="h-3 w-3" />,
       );
     }
     if (isTripWrittenOff(trip.payment_status)) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 text-gray-700">
-          <Ban className="h-3 w-3" /> Will not pay
-        </span>
+      return badgeBtn(
+        ['Will not pay'],
+        'bg-gray-200 text-gray-700 hover:ring-gray-400',
+        'Will not pay',
+        <Ban className="h-3 w-3" />,
       );
     }
     const overdue = isTripPaymentOverdue(trip);
     if (overdue) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-600 text-white">
-          <AlertTriangle className="h-3 w-3" /> Overdue
-        </span>
+      return badgeBtn(
+        ['Pending', 'Partial Pending'],
+        'bg-red-600 text-white hover:ring-red-400',
+        'Overdue',
+        <AlertTriangle className="h-3 w-3" />,
       );
     }
     const display = getTripPaymentDisplayStatus(trip);
     if (display === 'Partial Pending') {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-100 text-orange-800">
-          <Clock className="h-3 w-3" /> Partial Pending
-        </span>
+      return badgeBtn(
+        ['Partial Pending'],
+        'bg-orange-100 text-orange-800 hover:ring-orange-300',
+        'Partial Pending',
+        <Clock className="h-3 w-3" />,
       );
     }
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-800">
-        <Clock className="h-3 w-3" /> Pending
-      </span>
+    return badgeBtn(
+      ['Pending'],
+      'bg-amber-100 text-amber-800 hover:ring-amber-300',
+      'Pending',
+      <Clock className="h-3 w-3" />,
     );
   }
 
@@ -1060,24 +1101,54 @@ export default function TripsPage() {
         </button>
         {showSummary && (
           <div className="grid grid-cols-2 gap-3">
-            <Card>
-              <CardContent className="py-3 px-4">
-                <p className="text-xs text-amber-600">Pending</p>
-                <p className="text-lg font-bold text-amber-700">{formatCurrency(summary.pendingRevenue)}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-3 px-4">
-                <p className="text-xs text-green-600">Collected</p>
-                <p className="text-lg font-bold text-green-700">{formatCurrency(summary.paidRevenue)}</p>
-              </CardContent>
-            </Card>
-            <Card className="col-span-2">
-              <CardContent className="py-3 px-4">
-                <p className="text-xs text-gray-600">Will not pay</p>
-                <p className="text-lg font-bold text-gray-700">{formatCurrency(summary.writtenOffRevenue)}</p>
-              </CardContent>
-            </Card>
+            <button
+              type="button"
+              onClick={() => filterByPaymentOnly(['Pending', 'Partial Pending'])}
+              className={cn(
+                'rounded-xl text-left transition-shadow',
+                paymentSummaryActive.pending && 'ring-2 ring-amber-400 ring-offset-1',
+              )}
+              title="Show pending trips only"
+            >
+              <Card className="hover:bg-amber-50/50">
+                <CardContent className="py-3 px-4">
+                  <p className="text-xs text-amber-600">Pending</p>
+                  <p className="text-lg font-bold text-amber-700">{formatCurrency(summary.pendingRevenue)}</p>
+                </CardContent>
+              </Card>
+            </button>
+            <button
+              type="button"
+              onClick={() => filterByPaymentOnly(['Fully Paid'])}
+              className={cn(
+                'rounded-xl text-left transition-shadow',
+                paymentSummaryActive.collected && 'ring-2 ring-green-400 ring-offset-1',
+              )}
+              title="Show fully paid trips only"
+            >
+              <Card className="hover:bg-green-50/50">
+                <CardContent className="py-3 px-4">
+                  <p className="text-xs text-green-600">Collected</p>
+                  <p className="text-lg font-bold text-green-700">{formatCurrency(summary.paidRevenue)}</p>
+                </CardContent>
+              </Card>
+            </button>
+            <button
+              type="button"
+              onClick={() => filterByPaymentOnly(['Will not pay'])}
+              className={cn(
+                'col-span-2 rounded-xl text-left transition-shadow',
+                paymentSummaryActive.writtenOff && 'ring-2 ring-gray-400 ring-offset-1',
+              )}
+              title="Show will not pay trips only"
+            >
+              <Card className="hover:bg-gray-50">
+                <CardContent className="py-3 px-4">
+                  <p className="text-xs text-gray-600">Will not pay</p>
+                  <p className="text-lg font-bold text-gray-700">{formatCurrency(summary.writtenOffRevenue)}</p>
+                </CardContent>
+              </Card>
+            </button>
           </div>
         )}
       </div>
@@ -1095,24 +1166,54 @@ export default function TripsPage() {
             <p className="text-xl font-bold text-green-600">{formatCurrency(summary.revenue)}</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs text-green-600">Collected</p>
-            <p className="text-xl font-bold text-green-700">{formatCurrency(summary.paidRevenue)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs text-amber-600">Pending</p>
-            <p className="text-xl font-bold text-amber-700">{formatCurrency(summary.pendingRevenue)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3 px-4">
-            <p className="text-xs text-gray-600">Will not pay</p>
-            <p className="text-xl font-bold text-gray-700">{formatCurrency(summary.writtenOffRevenue)}</p>
-          </CardContent>
-        </Card>
+        <button
+          type="button"
+          onClick={() => filterByPaymentOnly(['Fully Paid'])}
+          className={cn(
+            'rounded-xl text-left transition-shadow',
+            paymentSummaryActive.collected && 'ring-2 ring-green-400 ring-offset-1',
+          )}
+          title="Show fully paid trips only"
+        >
+          <Card className="h-full hover:bg-green-50/50">
+            <CardContent className="py-3 px-4">
+              <p className="text-xs text-green-600">Collected</p>
+              <p className="text-xl font-bold text-green-700">{formatCurrency(summary.paidRevenue)}</p>
+            </CardContent>
+          </Card>
+        </button>
+        <button
+          type="button"
+          onClick={() => filterByPaymentOnly(['Pending', 'Partial Pending'])}
+          className={cn(
+            'rounded-xl text-left transition-shadow',
+            paymentSummaryActive.pending && 'ring-2 ring-amber-400 ring-offset-1',
+          )}
+          title="Show pending trips only"
+        >
+          <Card className="h-full hover:bg-amber-50/50">
+            <CardContent className="py-3 px-4">
+              <p className="text-xs text-amber-600">Pending</p>
+              <p className="text-xl font-bold text-amber-700">{formatCurrency(summary.pendingRevenue)}</p>
+            </CardContent>
+          </Card>
+        </button>
+        <button
+          type="button"
+          onClick={() => filterByPaymentOnly(['Will not pay'])}
+          className={cn(
+            'rounded-xl text-left transition-shadow',
+            paymentSummaryActive.writtenOff && 'ring-2 ring-gray-400 ring-offset-1',
+          )}
+          title="Show will not pay trips only"
+        >
+          <Card className="h-full hover:bg-gray-50">
+            <CardContent className="py-3 px-4">
+              <p className="text-xs text-gray-600">Will not pay</p>
+              <p className="text-xl font-bold text-gray-700">{formatCurrency(summary.writtenOffRevenue)}</p>
+            </CardContent>
+          </Card>
+        </button>
       </div>
 
       {/* Advanced Filters */}

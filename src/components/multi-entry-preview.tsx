@@ -45,17 +45,17 @@ export function MultiEntryPreview({
 
   return (
     <div className={cn('group/preview relative max-w-[220px]', className)}>
-      <button
-        type="button"
+      {/* Use a div (not button) so this can sit inside card expand buttons without nested <button> hydration errors. */}
+      <div
+        tabIndex={multiple ? 0 : undefined}
         className={cn(
           'w-full rounded text-left text-sm text-gray-600 outline-none',
-          'focus-visible:ring-2 focus-visible:ring-ring/40',
-          multiple && 'cursor-help',
+          multiple && 'cursor-help focus-visible:ring-2 focus-visible:ring-ring/40',
         )}
         aria-label={
           multiple
             ? `Latest: ${latest.text}. ${entries.length} total — show all`
-            : latest.text
+            : undefined
         }
       >
         <span className="line-clamp-2">{latest.text}</span>
@@ -64,7 +64,7 @@ export function MultiEntryPreview({
             +{entries.length - 1} more
           </span>
         )}
-      </button>
+      </div>
 
       {multiple && (
         <div
