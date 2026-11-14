@@ -33,6 +33,7 @@ import { RolesSection, UsersSection } from '@/components/admin-access';
 import { RoutesManager } from '@/components/routes-manager';
 import { useSession } from '@/components/session-provider';
 import { toast } from 'sonner';
+import { confirmAction } from '@/components/confirm-dialog';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { useServerPagination } from '@/hooks/use-server-pagination';
@@ -166,7 +167,12 @@ function DriversSection() {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('Delete this driver? This will fail if trips reference them.')) return;
+    if (!(await confirmAction({
+      title: 'Delete this driver?',
+      description: 'This will fail if trips still reference them.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
     const { error } = await supabase.from('drivers').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     toast.success('Driver deleted');
@@ -365,7 +371,12 @@ function PartnersSection() {
       toast.error(`Cannot delete "${name}" — core entity/partner`);
       return;
     }
-    if (!confirm(`Delete "${name}"? This will fail if expenses or contributions reference them.`)) return;
+    if (!(await confirmAction({
+      title: `Delete "${name}"?`,
+      description: 'This will fail if expenses or contributions still reference them.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
     const { error } = await supabase.from('partners').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     toast.success('Partner deleted');
@@ -604,7 +615,12 @@ function CreditCardsSection() {
       toast.error(`Cannot delete — used in ${expCount || 0} expense(s) and ${capCount || 0} capital row(s)`);
       return;
     }
-    if (!confirm(`Delete card "${card.label}"?`)) return;
+    if (!(await confirmAction({
+      title: `Delete card "${card.label}"?`,
+      description: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
 
     const { error } = await supabase.from('credit_cards').delete().eq('id', card.id);
     if (error) { toast.error(error.message); return; }
@@ -902,7 +918,12 @@ function CategoriesSection() {
       toast.error(`Cannot delete "${c.name}" — ${count} expense(s) use this category`);
       return;
     }
-    if (!confirm(`Delete category "${c.name}"?`)) return;
+    if (!(await confirmAction({
+      title: `Delete category "${c.name}"?`,
+      description: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
 
     const { error } = await supabase.from('expense_categories').delete().eq('id', c.id);
     if (error) { toast.error(error.message); return; }

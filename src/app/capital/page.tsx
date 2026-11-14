@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { Plus, Pencil, Trash2, CheckCircle2, Clock, ChevronDown, ChevronUp, X, Banknote } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmAction } from '@/components/confirm-dialog';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { ActiveFiltersBar } from '@/components/active-filters-bar';
@@ -477,7 +478,12 @@ export default function CapitalPage() {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('Delete this contribution?')) return;
+    if (!(await confirmAction({
+      title: 'Delete this contribution?',
+      description: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
     const { error } = await supabase.from('capital_contributions').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     toast.success('Contribution deleted');

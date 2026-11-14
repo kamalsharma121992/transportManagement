@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
+import { ConfirmDialogProvider } from "@/components/confirm-dialog";
 import { Toaster } from "@/components/ui/sonner";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -20,10 +21,12 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full">
       <body className={`${inter.className} h-full bg-gray-50`}>
-        <AppShell>
-          <Suspense fallback={null}>{children}</Suspense>
-        </AppShell>
-        <Toaster />
+        <ConfirmDialogProvider>
+          <AppShell>
+            <Suspense fallback={null}>{children}</Suspense>
+          </AppShell>
+          <Toaster />
+        </ConfirmDialogProvider>
       </body>
     </html>
   );

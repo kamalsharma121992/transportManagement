@@ -51,6 +51,7 @@ import { applySupabaseSort } from '@/lib/sort';
 import { recordAudit } from '@/lib/audit-client';
 import { EntityAuditHistory } from '@/components/entity-audit-history';
 import { ExpenseNotesPanel } from '@/components/expense-notes-panel';
+import { confirmAction } from '@/components/confirm-dialog';
 import { addExpenseNote } from '@/lib/expense-notes';
 import { useSession } from '@/components/session-provider';
 import { useTableSort } from '@/hooks/use-table-sort';
@@ -786,7 +787,12 @@ export default function ExpensesPage() {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('Delete this expense?')) return;
+    if (!(await confirmAction({
+      title: 'Delete this expense?',
+      description: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
     const exp = expenses.find((e) => e.id === id);
     const urls = exp ? expenseImageList(exp) : [];
     if (urls.length > 0) {

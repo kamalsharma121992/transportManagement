@@ -13,6 +13,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Plus, Pencil, Trash2, Truck, Car } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmAction } from '@/components/confirm-dialog';
 import { PaginationControls } from '@/components/pagination-controls';
 import { PageHeader } from '@/components/page-header';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -119,7 +120,12 @@ export default function VehiclesPage() {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('Delete this vehicle? This will fail if trips/expenses reference it.')) return;
+    if (!(await confirmAction({
+      title: 'Delete this vehicle?',
+      description: 'This will fail if trips or expenses still reference it.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
     const { error } = await supabase.from('vehicles').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     toast.success('Vehicle deleted');

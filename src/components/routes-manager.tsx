@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmAction } from '@/components/confirm-dialog';
 import { PaginationControls } from '@/components/pagination-controls';
 import { useServerPagination } from '@/hooks/use-server-pagination';
 import { getSupabaseRange } from '@/lib/pagination';
@@ -88,7 +89,12 @@ export function RoutesManager() {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('Delete this route? This will fail if trips reference it.')) return;
+    if (!(await confirmAction({
+      title: 'Delete this route?',
+      description: 'This will fail if trips still reference it.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
     const { error } = await supabase.from('routes').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     toast.success('Route deleted');

@@ -23,6 +23,7 @@ import {
   EXPENSE_ADVANCE_WARNING_DAYS,
 } from '@/lib/constants';
 import { PageHeader } from '@/components/page-header';
+import { confirmAction } from '@/components/confirm-dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -280,7 +281,12 @@ export default function ExpenseAdvancesPage() {
     const extra = row.settled > 0
       ? ` This will also remove ${formatCurrency(row.settled)} in settlement expenses.`
       : '';
-    if (!confirm(`Delete expense advance for ${row.person} (${formatCurrency(row.amount)})?${extra}`)) {
+    if (!(await confirmAction({
+      title: `Delete expense advance for ${row.person}?`,
+      description: `${formatCurrency(row.amount)}.${extra}`,
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) {
       return;
     }
     try {

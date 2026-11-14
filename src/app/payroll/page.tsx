@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/dialog';
 import { Check, ChevronDown, ChevronUp, FileDown, Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmAction } from '@/components/confirm-dialog';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
@@ -229,7 +230,12 @@ export default function PayrollPage() {
   }
 
   async function handleRevertSalary(row: MonthlyPayrollRow) {
-    if (!confirm(`Remove salary expense for ${row.driver.name} in ${selectedMonth}?`)) return;
+    if (!(await confirmAction({
+      title: `Remove salary for ${row.driver.name}?`,
+      description: `This removes the salary expense for ${selectedMonth}.`,
+      confirmLabel: 'Remove',
+      variant: 'destructive',
+    }))) return;
     setPosting(`revert-salary-${row.driver.name}`);
     try {
       await revertSalary(row.driver.name, selectedMonth, {
@@ -246,7 +252,12 @@ export default function PayrollPage() {
   }
 
   async function handleRevertLastAllowance(row: MonthlyPayrollRow) {
-    if (!confirm(`Remove the last allowance payment for ${row.driver.name} in ${selectedMonth}?`)) return;
+    if (!(await confirmAction({
+      title: `Remove last allowance for ${row.driver.name}?`,
+      description: `This removes the last allowance payment in ${selectedMonth}.`,
+      confirmLabel: 'Remove',
+      variant: 'destructive',
+    }))) return;
     setPosting(`revert-allowance-${row.driver.name}`);
     try {
       await revertLastAllowance(row.driver.name, selectedMonth, {

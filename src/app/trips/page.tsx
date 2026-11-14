@@ -66,6 +66,7 @@ import { useSession, useSessionReady } from '@/components/session-provider';
 import { recordAudit } from '@/lib/audit-client';
 import { EntityAuditHistory } from '@/components/entity-audit-history';
 import { TripNotesPanel } from '@/components/trip-notes-panel';
+import { confirmAction } from '@/components/confirm-dialog';
 import { addTripNote } from '@/lib/trip-notes';
 
 const emptyTrip: TripFormData = {
@@ -814,7 +815,12 @@ export default function TripsPage() {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('Delete this trip?')) return;
+    if (!(await confirmAction({
+      title: 'Delete this trip?',
+      description: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
     const trip = trips.find((t) => t.id === id);
     const urls = trip ? tripBuiltyUrls(trip) : [];
     if (urls.length > 0) {

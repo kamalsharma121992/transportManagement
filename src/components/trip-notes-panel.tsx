@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useSession } from '@/components/session-provider';
+import { confirmAction } from '@/components/confirm-dialog';
 import { recordAudit } from '@/lib/audit-client';
 import { getSupabase } from '@/lib/supabase';
 import {
@@ -114,7 +115,12 @@ export function TripNotesPanel({
   }
 
   async function handleDelete(noteId: number) {
-    if (!confirm('Delete this note?')) return;
+    if (!(await confirmAction({
+      title: 'Delete this note?',
+      description: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    }))) return;
     setSaving(true);
     const { error: err } = await deleteTripNote(noteId);
     setSaving(false);
