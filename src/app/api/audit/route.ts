@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     if (!Number.isFinite(entityId) || entityId <= 0) {
       return NextResponse.json({ error: 'Invalid entityId' }, { status: 400 });
     }
-    if (entityType !== 'trip' && entityType !== 'expense') {
+    if (entityType !== 'trip' && entityType !== 'expense' && entityType !== 'monthly_note') {
       return NextResponse.json({ error: 'Invalid entityType' }, { status: 400 });
     }
     try {

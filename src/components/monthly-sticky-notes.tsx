@@ -1,12 +1,19 @@
 'use client';
 
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { GripVertical, Loader2, Plus, StickyNote, Trash2, X } from 'lucide-react';
+import { GripVertical, Info, Loader2, Plus, StickyNote, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { useSession } from '@/components/session-provider';
 import { confirmAction } from '@/components/confirm-dialog';
+import { EntityAuditHistory } from '@/components/entity-audit-history';
 import { recordAudit } from '@/lib/audit-client';
 import {
   addMonthlyNote,
@@ -20,6 +27,30 @@ import {
 import { noteHtmlIsEmpty } from '@/lib/note-html';
 import { NoteHtmlView, NoteRichEditor } from '@/components/note-rich-editor';
 import { cn } from '@/lib/utils';
+
+function stripNoteText(html: string) {
+  return html
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function monthlyNoteAuditSummary(
+  action: 'Added' | 'Updated' | 'Deleted',
+  month: string,
+  title: string,
+  noteHtml: string,
+) {
+  const period = monthLabel(month);
+  const heading = title.trim() || stripNoteText(noteHtml).slice(0, 48) || 'Untitled note';
+  const preview = stripNoteText(noteHtml);
+  const body = preview && preview !== heading
+    ? ` — ${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}`
+    : '';
+  return `${action} monthly note (${period}): ${heading}${body}`;
+}
 
 const STICKY_COLORS = [
   'bg-amber-100 border-amber-200 shadow-amber-200/60',
@@ -91,6 +122,7 @@ export function MonthlyStickyNotes({
   const [editDraft, setEditDraft] = useState('');
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [dropTargetId, setDropTargetId] = useState<number | null>(null);
+  const [historyNote, setHistoryNote] = useState<MonthlyNote | null>(null);
   const dragFromIndex = useRef<number | null>(null);
   const dragAllowedRef = useRef(false);
   const didDragRef = useRef(false);
@@ -143,7 +175,12 @@ export function MonthlyStickyNotes({
       setDraftTitle('');
       setDraft('');
       setAdding(false);
-      recordAudit('add', 'Dashboard', `Added monthly note for ${month}`);
+      recordAudit(
+        'add',
+        'Monthly Notes',
+        monthlyNoteAuditSummary('Added', month, data.title, data.note),
+        { type: 'monthly_note', id: data.id },
+      );
       toast.success('Sticky note added');
     }
   }
@@ -162,7 +199,12 @@ export function MonthlyStickyNotes({
       setEditingId(null);
       setEditTitle('');
       setEditDraft('');
-      recordAudit('edit', 'Dashboard', `Updated monthly note for ${month}`);
+      recordAudit(
+        'edit',
+        'Monthly Notes',
+        monthlyNoteAuditSummary('Updated', month, data.title, data.note),
+        { type: 'monthly_note', id: data.id },
+      );
       toast.success('Note updated');
     }
   }
@@ -189,7 +231,12 @@ export function MonthlyStickyNotes({
       return;
     }
     setNotes((prev) => prev.filter((n) => n.id !== note.id));
-    recordAudit('delete', 'Dashboard', `Deleted monthly note for ${month}`);
+    recordAudit(
+      'delete',
+      'Monthly Notes',
+      monthlyNoteAuditSummary('Deleted', month, note.title, note.note),
+      { type: 'monthly_note', id: note.id },
+    );
     toast.success('Note deleted');
   }
 
@@ -376,6 +423,17 @@ export function MonthlyStickyNotes({
                     <button
                       type="button"
                       className="rounded p-1 text-gray-600 hover:bg-black/5"
+                      title="Audit history"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setHistoryNote(note);
+                      }}
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded p-1 text-gray-600 hover:bg-black/5"
                       title="Dismiss for now (shows again after refresh)"
                       onClick={() => handleCancel(note)}
                     >
@@ -457,6 +515,36 @@ export function MonthlyStickyNotes({
           })}
         </div>
       )}
+
+      <Dialog open={historyNote != null} onOpenChange={(open) => { if (!open) setHistoryNote(null); }}>
+        <DialogContent className="max-w-md gap-0 p-0 sm:max-w-md">
+          {historyNote && (
+            <>
+              <DialogHeader className="border-b px-4 py-3 pr-12 sm:px-5">
+                <DialogTitle className="truncate">
+                  {historyNote.title?.trim() || 'Note history'}
+                </DialogTitle>
+                <p className="text-sm text-gray-500">
+                  {monthLabel(historyNote.month)} · audit log for this note
+                </p>
+              </DialogHeader>
+              <div className="max-h-[min(70vh,28rem)] overflow-y-auto px-4 py-3 sm:px-5">
+                <EntityAuditHistory
+                  entityType="monthly_note"
+                  entityId={historyNote.id}
+                  className="border-t-0 pt-0"
+                  listClassName="max-h-none"
+                />
+              </div>
+              <div className="border-t px-4 py-3 sm:px-5">
+                <Button type="button" variant="outline" className="w-full" onClick={() => setHistoryNote(null)}>
+                  Close
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

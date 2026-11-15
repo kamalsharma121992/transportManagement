@@ -1,6 +1,6 @@
 export type AuditAction = 'add' | 'edit' | 'delete';
 
-export type AuditEntityType = 'trip' | 'expense';
+export type AuditEntityType = 'trip' | 'expense' | 'monthly_note';
 
 export type EntityAuditRow = {
   id: number;
