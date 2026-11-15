@@ -883,22 +883,32 @@ export default function TripsPage() {
   const readyCount = parsedTrips.filter((r) => r.complete).length;
 
   function renderPaymentBadge(trip: Trip) {
+    // Use span (not button) so badges can sit inside mobile card expand <button>s.
     const badgeBtn = (statuses: string[], className: string, label: string, icon: ReactNode) => (
-      <button
-        type="button"
+      <span
+        role="button"
+        tabIndex={0}
         title={`Filter: ${statuses.join(', ')}`}
         className={cn(
-          'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-shadow hover:ring-2 hover:ring-offset-1',
+          'inline-flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-shadow hover:ring-2 hover:ring-offset-1',
+          'outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
           className,
         )}
         onClick={(e) => {
           e.stopPropagation();
           filterByPaymentOnly(statuses);
         }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            filterByPaymentOnly(statuses);
+          }
+        }}
       >
         {icon}
         {label}
-      </button>
+      </span>
     );
 
     if (trip.payment_status === 'Fully Paid') {

@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/page-header';
 import { ActiveFiltersBar } from '@/components/active-filters-bar';
+import { MonthlyStickyNotes } from '@/components/monthly-sticky-notes';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
 import { formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -440,6 +441,8 @@ export default function Dashboard() {
           clearLabel="Reset filters"
         />
       </div>
+
+      <MonthlyStickyNotes month={filterMonth || currentMonth} />
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
         <Card>
