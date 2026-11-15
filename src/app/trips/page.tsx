@@ -12,6 +12,7 @@ import {
 import {
   TRIP_PAYMENT_DISPLAY_FILTERS,
   getTripPaymentDisplayStatus,
+  getWillNotPayLabel,
   isFullPendingAmounts,
   isTripPaymentDueSoon,
   isTripPaymentOverdue,
@@ -920,10 +921,13 @@ export default function TripsPage() {
       );
     }
     if (isTripWrittenOff(trip.payment_status)) {
+      const partPaid = Number(trip.advance_paid || 0) > 0;
       return badgeBtn(
         ['Will not pay'],
-        'bg-gray-200 text-gray-700 hover:ring-gray-400',
-        'Will not pay',
+        partPaid
+          ? 'bg-slate-200 text-slate-800 hover:ring-slate-400'
+          : 'bg-gray-200 text-gray-700 hover:ring-gray-400',
+        getWillNotPayLabel(trip),
         <Ban className="h-3 w-3" />,
       );
     }
@@ -1782,7 +1786,9 @@ export default function TripsPage() {
                       </select>
                       {form.payment_status === 'Will not pay' && (
                         <p className="mt-1 text-[10px] text-gray-500">
-                          Remaining balance will not be collected. Any advance already received is kept.
+                          {Number(form.advance_paid || 0) > 0
+                            ? 'Part paid · will not pay — advance counts as collected; remaining balance is written off.'
+                            : 'Remaining balance will not be collected. Enter any advance already received above.'}
                         </p>
                       )}
                     </div>

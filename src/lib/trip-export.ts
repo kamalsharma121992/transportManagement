@@ -1,7 +1,7 @@
 import type { Trip } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports';
-import { getTripPaymentDisplayStatus, tripPaymentAmounts } from '@/lib/trip-payments';
+import { getTripPaymentBadgeLabel, tripPaymentAmounts } from '@/lib/trip-payments';
 import { normalizeImageUrls } from '@/lib/image-urls';
 
 /** Columns for CSV export */
@@ -81,7 +81,7 @@ export function toTripExportRows(trips: Trip[]): TripExportRow[] {
     advancePaid: String(trip.advance_paid ?? 0),
     balanceDue: String(trip.balance_due ?? 0),
     paymentStatus: trip.payment_status,
-    paymentDisplay: getTripPaymentDisplayStatus(trip),
+    paymentDisplay: getTripPaymentBadgeLabel(trip),
     expectedDate: trip.payment_expected_date || '',
     notes: trip.notes || '',
     builtyUrl: normalizeImageUrls(trip.builty_urls, trip.builty_url).join(' '),
@@ -130,7 +130,7 @@ function buildTripsPdfHtml(params: {
   const parts: string[] = new Array(rows.length);
   for (let i = 0; i < rows.length; i++) {
     const t = rows[i];
-    const display = getTripPaymentDisplayStatus(t);
+    const display = getTripPaymentBadgeLabel(t);
     const expected = t.payment_expected_date ? escapeHtml(formatDate(t.payment_expected_date)) : '';
     const balanceDue = Number(t.balance_due || 0);
     parts[i] =

@@ -52,6 +52,20 @@ export function getTripPaymentDisplayStatus(trip: {
   return 'Pending';
 }
 
+/** UI label for Will not pay — clarifies part-paid + write-off without changing filter value. */
+export function getWillNotPayLabel(trip: { advance_paid?: number | null }): string {
+  return Number(trip.advance_paid || 0) > 0 ? 'Part paid · will not pay' : 'Will not pay';
+}
+
+/** Human-readable payment badge / export label (filters still use display status). */
+export function getTripPaymentBadgeLabel(trip: {
+  payment_status: string;
+  advance_paid?: number | null;
+}): string {
+  if (trip.payment_status === 'Will not pay') return getWillNotPayLabel(trip);
+  return getTripPaymentDisplayStatus(trip);
+}
+
 export function isFullPendingAmounts(trip: {
   payment_status: string;
   advance_paid?: number | null;
