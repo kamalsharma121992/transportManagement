@@ -21,6 +21,9 @@ import {
   normalizeTripPaymentStatus,
   applyTripPaymentDisplayFilter,
   tripPaymentAmounts,
+  withAdvanceFromBalance,
+  withBalanceFromAdvance,
+  withFullyPaidAmounts,
   withWillNotPayAmounts,
 } from '@/lib/trip-payments';
 import { Card, CardContent } from '@/components/ui/card';
@@ -108,15 +111,19 @@ function withFullPendingAmounts<T extends { advance_paid: number; balance_due: n
   fullPending: boolean,
 ): T {
   if (!fullPending) return form;
-  return { ...form, advance_paid: 0, balance_due: form.total_revenue };
+  const total = Number(form.total_revenue) || 0;
+  return { ...form, advance_paid: 0, balance_due: total };
 }
 
+/** After total/status changes: keep advance ↔ balance in sync; user can still edit either field. */
 function applyPaymentAmounts<T extends { payment_status: string; advance_paid: number; balance_due: number; total_revenue: number }>(
   form: T,
   fullPending: boolean,
 ): T {
+  if (form.payment_status === 'Fully Paid') return withFullyPaidAmounts(form);
   if (form.payment_status === 'Will not pay') return withWillNotPayAmounts(form);
-  return withFullPendingAmounts(form, fullPending && form.payment_status === 'Pending');
+  if (fullPending && form.payment_status === 'Pending') return withFullPendingAmounts(form, true);
+  return withBalanceFromAdvance(form);
 }
 
 export default function TripsPage() {
@@ -637,7 +644,21 @@ export default function TripsPage() {
             total_revenue: calcNetRevenue(weight, rate, commission || 0),
           };
         }
-        const updated = recalcTripRow({ ...row, ...nextPatch }, { vehicles, drivers, routes });
+        let merged = { ...row, ...nextPatch };
+        if (patch.advance_paid !== undefined && patch.balance_due === undefined) {
+          merged = withBalanceFromAdvance(merged);
+        } else if (patch.balance_due !== undefined && patch.advance_paid === undefined) {
+          merged = withAdvanceFromBalance(merged);
+        } else if (
+          patch.total_revenue !== undefined
+          || patch.weight_tons !== undefined
+          || patch.rate_per_ton !== undefined
+          || patch.commission !== undefined
+          || patch.route_name !== undefined
+        ) {
+          merged = withBalanceFromAdvance(merged);
+        }
+        const updated = recalcTripRow(merged, { vehicles, drivers, routes });
         const missingFields = [
           !updated.date && 'Date',
           !updated.vehicle_number && 'Vehicle',
@@ -1771,7 +1792,7 @@ export default function TripsPage() {
                           setFullPending(nextFullPending);
                           setForm((f) => {
                             if (payment_status === 'Fully Paid') {
-                              return { ...f, payment_status, balance_due: 0, payment_expected_date: '' };
+                              return withFullyPaidAmounts({ ...f, payment_status, payment_expected_date: '' });
                             }
                             if (payment_status === 'Will not pay') {
                               return withWillNotPayAmounts({ ...f, payment_status, payment_expected_date: '' });
@@ -1799,14 +1820,15 @@ export default function TripsPage() {
                         step="0.01"
                         value={form.advance_paid || ''}
                         onChange={(e) => {
-                          const advance_paid = Number(e.target.value);
-                          setForm((f) => {
-                            const next = { ...f, advance_paid };
-                            return f.payment_status === 'Will not pay' ? withWillNotPayAmounts(next) : next;
-                          });
+                          const raw = e.target.value;
+                          const advance_paid = raw === '' ? 0 : Number(raw);
+                          setForm((f) => withBalanceFromAdvance({ ...f, advance_paid }));
                           if (fullPending && advance_paid !== 0) setFullPending(false);
                         }}
                       />
+                      <p className="mt-1 text-[10px] text-gray-400">
+                        Auto-updates {form.payment_status === 'Will not pay' ? 'amount not coming' : 'balance due'} · editable
+                      </p>
                     </div>
                     <div>
                       <Label>{form.payment_status === 'Will not pay' ? 'Amount not coming' : 'Balance due'}</Label>
@@ -1815,11 +1837,15 @@ export default function TripsPage() {
                         step="0.01"
                         value={form.balance_due || ''}
                         onChange={(e) => {
-                          const balance_due = Number(e.target.value);
-                          setForm((f) => ({ ...f, balance_due }));
+                          const raw = e.target.value;
+                          const balance_due = raw === '' ? 0 : Number(raw);
+                          setForm((f) => withAdvanceFromBalance({ ...f, balance_due }));
                           if (fullPending && balance_due !== form.total_revenue) setFullPending(false);
                         }}
                       />
+                      <p className="mt-1 text-[10px] text-gray-400">
+                        Auto from total − advance · editable
+                      </p>
                     </div>
                     {form.payment_status === 'Pending' && (
                       <>

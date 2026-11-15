@@ -60,6 +60,7 @@ MIGRATIONS=(
   "supabase/monthly_notes.sql"
   "supabase/monthly_notes_sort_order.sql"
   "supabase/monthly_notes_position.sql"
+  "supabase/monthly_notes_rich.sql"
   "supabase/expense_descriptions.sql"
   "supabase/unify_other_category.sql"
   "supabase/routes_commission.sql"

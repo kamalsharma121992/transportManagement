@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { GripVertical, Loader2, Plus, StickyNote, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useSession } from '@/components/session-provider';
 import { confirmAction } from '@/components/confirm-dialog';
 import { recordAudit } from '@/lib/audit-client';
@@ -16,6 +17,8 @@ import {
   updateMonthlyNote,
   type MonthlyNote,
 } from '@/lib/monthly-notes';
+import { noteHtmlIsEmpty } from '@/lib/note-html';
+import { NoteHtmlView, NoteRichEditor } from '@/components/note-rich-editor';
 import { cn } from '@/lib/utils';
 
 const STICKY_COLORS = [
@@ -60,6 +63,10 @@ function applySortOrders(rows: MonthlyNote[]): MonthlyNote[] {
   return rows.map((n, index) => ({ ...n, sort_order: index }));
 }
 
+function canSaveNote(title: string, bodyHtml: string) {
+  return title.trim().length > 0 || !noteHtmlIsEmpty(bodyHtml);
+}
+
 export function MonthlyStickyNotes({
   month,
   className,
@@ -76,9 +83,11 @@ export function MonthlyStickyNotes({
   /** Cancelled this session only — cleared on refresh / remount so notes show again. */
   const [cancelledIds, setCancelledIds] = useState<Set<number>>(() => new Set());
   const [adding, setAdding] = useState(false);
+  const [draftTitle, setDraftTitle] = useState('');
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState('');
   const [editDraft, setEditDraft] = useState('');
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [dropTargetId, setDropTargetId] = useState<number | null>(null);
@@ -96,8 +105,10 @@ export function MonthlyStickyNotes({
 
   useEffect(() => {
     setAdding(false);
+    setDraftTitle('');
     setDraft('');
     setEditingId(null);
+    setEditTitle('');
     setEditDraft('');
     setDraggingId(null);
     setDropTargetId(null);
@@ -119,9 +130,9 @@ export function MonthlyStickyNotes({
   }
 
   async function handleAdd() {
-    if (!draft.trim() || saving) return;
+    if (!canSaveNote(draftTitle, draft) || saving) return;
     setSaving(true);
-    const { data, error: err } = await addMonthlyNote(month, draft, actor);
+    const { data, error: err } = await addMonthlyNote(month, draft, actor, draftTitle);
     setSaving(false);
     if (err) {
       toast.error(err);
@@ -129,6 +140,7 @@ export function MonthlyStickyNotes({
     }
     if (data) {
       setNotes((prev) => sortMonthlyNotes([data, ...prev]));
+      setDraftTitle('');
       setDraft('');
       setAdding(false);
       recordAudit('add', 'Dashboard', `Added monthly note for ${month}`);
@@ -137,9 +149,9 @@ export function MonthlyStickyNotes({
   }
 
   async function handleSaveEdit(noteId: number) {
-    if (!editDraft.trim() || saving) return;
+    if (!canSaveNote(editTitle, editDraft) || saving) return;
     setSaving(true);
-    const { data, error: err } = await updateMonthlyNote(noteId, editDraft, actor);
+    const { data, error: err } = await updateMonthlyNote(noteId, editDraft, actor, editTitle);
     setSaving(false);
     if (err) {
       toast.error(err);
@@ -148,6 +160,7 @@ export function MonthlyStickyNotes({
     if (data) {
       setNotes((prev) => sortMonthlyNotes(prev.map((n) => (n.id === noteId ? data : n))));
       setEditingId(null);
+      setEditTitle('');
       setEditDraft('');
       recordAudit('edit', 'Dashboard', `Updated monthly note for ${month}`);
       toast.success('Note updated');
@@ -182,6 +195,7 @@ export function MonthlyStickyNotes({
 
   function startEdit(note: MonthlyNote) {
     setEditingId(note.id);
+    setEditTitle(note.title || '');
     setEditDraft(note.note);
     setAdding(false);
   }
@@ -270,17 +284,26 @@ export function MonthlyStickyNotes({
       )}
 
       {adding && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 shadow-sm">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={3}
-            placeholder="Write a sticky note for this month…"
-            className="w-full resize-y rounded-md border border-amber-200 bg-white/80 px-2.5 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+        <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 shadow-sm">
+          <Input
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            placeholder="Header (e.g. Pending tasks)"
+            className="border-amber-200 bg-white/80 font-semibold"
             autoFocus
           />
-          <div className="mt-2 flex gap-2">
-            <Button type="button" size="sm" disabled={saving || !draft.trim()} onClick={() => void handleAdd()}>
+          <NoteRichEditor
+            value={draft}
+            onChange={setDraft}
+            placeholder="Bullets, bold, highlight tasks…"
+          />
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={saving || !canSaveNote(draftTitle, draft)}
+              onClick={() => void handleAdd()}
+            >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save'}
             </Button>
             <Button
@@ -289,6 +312,7 @@ export function MonthlyStickyNotes({
               variant="ghost"
               onClick={() => {
                 setAdding(false);
+                setDraftTitle('');
                 setDraft('');
               }}
             >
@@ -370,30 +394,26 @@ export function MonthlyStickyNotes({
 
                 {editing ? (
                   <div className="flex flex-1 flex-col gap-2">
-                    <textarea
-                      value={editDraft}
-                      onChange={(e) => setEditDraft(e.target.value)}
-                      rows={4}
-                      className="w-full flex-1 resize-y rounded border border-black/10 bg-white/70 px-2 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-black/10"
-                      autoFocus
+                    <Input
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      placeholder="Header"
+                      className="h-8 border-black/10 bg-white/70 font-semibold"
                       onMouseDown={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Escape') {
-                          setEditingId(null);
-                          setEditDraft('');
-                        }
-                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                          e.preventDefault();
-                          void handleSaveEdit(note.id);
-                        }
-                      }}
+                    />
+                    <NoteRichEditor
+                      value={editDraft}
+                      onChange={setEditDraft}
+                      placeholder="Bullets, bold, highlight tasks…"
+                      autofocus
+                      minHeightClass="min-h-[90px]"
                     />
                     <div className="flex gap-2">
                       <Button
                         type="button"
                         size="sm"
                         className="h-7"
-                        disabled={saving || !editDraft.trim()}
+                        disabled={saving || !canSaveNote(editTitle, editDraft)}
                         onClick={() => void handleSaveEdit(note.id)}
                       >
                         Save
@@ -405,6 +425,7 @@ export function MonthlyStickyNotes({
                         className="h-7"
                         onClick={() => {
                           setEditingId(null);
+                          setEditTitle('');
                           setEditDraft('');
                         }}
                       >
@@ -415,7 +436,7 @@ export function MonthlyStickyNotes({
                 ) : (
                   <button
                     type="button"
-                    className="flex flex-1 cursor-text rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60"
+                    className="flex flex-1 cursor-text flex-col rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60"
                     title="Click to edit"
                     onClick={() => {
                       if (didDragRef.current) {
@@ -425,7 +446,10 @@ export function MonthlyStickyNotes({
                       startEdit(note);
                     }}
                   >
-                    <p className="w-full whitespace-pre-wrap text-sm leading-relaxed text-gray-900">{note.note}</p>
+                    {note.title?.trim() ? (
+                      <p className="mb-1 text-sm font-semibold text-gray-900">{note.title}</p>
+                    ) : null}
+                    <NoteHtmlView html={note.note} className="w-full" />
                   </button>
                 )}
               </div>

@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS monthly_notes (
   id SERIAL PRIMARY KEY,
   month TEXT NOT NULL CHECK (month ~ '^\d{4}-\d{2}$'),
+  title TEXT NOT NULL DEFAULT '',
   note TEXT NOT NULL,
   is_hidden BOOLEAN NOT NULL DEFAULT FALSE,
   sort_order INTEGER NOT NULL DEFAULT 0,

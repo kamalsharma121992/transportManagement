@@ -183,8 +183,12 @@ function finalizeTrip(form: TripFormData): TripFormData {
   if (!result.total_revenue && result.weight_tons > 0 && result.rate_per_ton > 0) {
     result.total_revenue = calcNetRevenue(result.weight_tons, result.rate_per_ton, result.commission || 0);
   }
-  if (result.balance_due === 0 && result.total_revenue > 0) {
-    result.balance_due = Math.max(result.total_revenue - (result.advance_paid || 0), 0);
+  // Keep balance in sync with total − advance (caller may have set either field explicitly).
+  if (result.total_revenue > 0) {
+    result.balance_due = Math.max(
+      Math.round((Number(result.total_revenue) - (Number(result.advance_paid) || 0)) * 100) / 100,
+      0,
+    );
   }
   return result;
 }

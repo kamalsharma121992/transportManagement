@@ -77,11 +77,41 @@ export function isFullPendingAmounts(trip: {
     && Number(trip.balance_due || 0) === Number(trip.total_revenue || 0);
 }
 
+function roundMoney(n: number) {
+  return Math.max(0, Math.round(n * 100) / 100);
+}
+
+/** Keep balance/amount-not-coming = total − advance (editable fields stay in sync). */
+export function withBalanceFromAdvance<T extends { advance_paid: number; balance_due: number; total_revenue: number }>(
+  form: T,
+): T {
+  const total = Number(form.total_revenue) || 0;
+  const advance = roundMoney(Number(form.advance_paid) || 0);
+  return { ...form, advance_paid: advance, balance_due: roundMoney(total - advance) };
+}
+
+/** Keep advance = total − balance/amount-not-coming. */
+export function withAdvanceFromBalance<T extends { advance_paid: number; balance_due: number; total_revenue: number }>(
+  form: T,
+): T {
+  const total = Number(form.total_revenue) || 0;
+  const due = roundMoney(Number(form.balance_due) || 0);
+  return { ...form, balance_due: due, advance_paid: roundMoney(total - due) };
+}
+
+/** Will not pay: remaining (not coming) = billed − advance already received. */
 export function withWillNotPayAmounts<T extends { advance_paid: number; balance_due: number; total_revenue: number }>(
   form: T,
 ): T {
-  const advance = Number(form.advance_paid) || 0;
-  return { ...form, balance_due: Math.max(0, Number(form.total_revenue) - advance) };
+  return withBalanceFromAdvance(form);
+}
+
+/** Fully paid: entire bill collected, nothing due. */
+export function withFullyPaidAmounts<T extends { advance_paid: number; balance_due: number; total_revenue: number }>(
+  form: T,
+): T {
+  const total = roundMoney(Number(form.total_revenue) || 0);
+  return { ...form, advance_paid: total, balance_due: 0 };
 }
 
 export type TripPaymentAmountRow = {
