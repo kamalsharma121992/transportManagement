@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { supabase, JM_PARTNERS } from '@/lib/supabase';
+import { supabase, JM_PARTNERS, DRIVER_PAY_CATEGORIES, SALARY_CATEGORIES } from '@/lib/supabase';
 import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS } from '@/lib/format';
 import {
   type DashboardCategoryExpense,
@@ -25,6 +25,29 @@ import { MultiSelectFilter } from '@/components/multi-select-filter';
 import { formatMultiFilterLabel } from '@/lib/filter-helpers';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { readMonthParam, splitQueryList, useFilterQuery } from '@/hooks/use-filter-query';
+
+const DRIVER_PAY_CATEGORY_SET = new Set<string>([
+  DRIVER_PAY_CATEGORIES.advance,
+  DRIVER_PAY_CATEGORIES.allowance,
+  DRIVER_PAY_CATEGORIES.salary,
+  ...SALARY_CATEGORIES,
+]);
+
+function driverCategoryAmount(row: DriverExpenseChartRow, category: string): number {
+  if (category === DRIVER_PAY_CATEGORIES.advance) {
+    return Number(row.payAdvance || 0) || Number(row['Advance'] || 0);
+  }
+  if (category === DRIVER_PAY_CATEGORIES.allowance) {
+    return Number(row.payAllowance || 0) || Number(row['Daily Allowance'] || 0);
+  }
+  if (category === DRIVER_PAY_CATEGORIES.salary) {
+    return (
+      Number(row.paySalary || 0)
+      || Number(row['Salary'] || 0) + Number(row['Driver Salary'] || 0)
+    );
+  }
+  return Number(row[category] || 0);
+}
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Input } from '@/components/ui/input';
@@ -161,6 +184,11 @@ export default function Dashboard() {
   const [expenseSheet, setExpenseSheet] = useState<{ kind: 'category' | 'vehicle' | 'person'; key: string } | null>(null);
   const [driverChart, setDriverChart] = useState<DriverExpenseChart>({ categories: [], rows: [] });
   const [hiddenDriverCategories, setHiddenDriverCategories] = useState<Set<string>>(() => new Set());
+  /** Categories shown as table columns. Empty = default pay columns. */
+  const [driverTableCategories, setDriverTableCategories] = useState<string[]>([]);
+  const [driverTableDriverQuery, setDriverTableDriverQuery] = useState('');
+  const [driverTablePreset, setDriverTablePreset] = useState<'pay' | 'tasks' | 'all' | 'custom'>('pay');
+  const [expandedDriverRows, setExpandedDriverRows] = useState<Set<string>>(() => new Set());
   const [sheetExpenses, setSheetExpenses] = useState<DashboardCategoryExpense[]>([]);
   const [sheetLoading, setSheetLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(() => Boolean(
@@ -372,27 +400,97 @@ export default function Dashboard() {
     : '/expenses';
 
   const visibleDriverCategories = driverChart.categories.filter((c) => !hiddenDriverCategories.has(c));
-  const driverPayAmount = (row: DriverExpenseChartRow, kind: 'advance' | 'allowance' | 'salary') => {
-    if (kind === 'advance') {
-      return Number(row.payAdvance || 0) || Number(row['Advance'] || 0);
-    }
-    if (kind === 'allowance') {
-      return Number(row.payAllowance || 0) || Number(row['Daily Allowance'] || 0);
-    }
-    return (
-      Number(row.paySalary || 0)
-      || Number(row['Salary'] || 0) + Number(row['Driver Salary'] || 0)
-    );
-  };
-  const driverPayTotals = driverChart.rows.reduce(
-    (acc, r) => ({
-      advance: acc.advance + driverPayAmount(r, 'advance'),
-      allowance: acc.allowance + driverPayAmount(r, 'allowance'),
-      salary: acc.salary + driverPayAmount(r, 'salary'),
-      total: acc.total + Number(r.total),
-    }),
-    { advance: 0, allowance: 0, salary: 0, total: 0 },
+
+  const driverPayCategories = useMemo(
+    () => driverChart.categories.filter((c) => DRIVER_PAY_CATEGORY_SET.has(c)),
+    [driverChart.categories],
   );
+  const driverTaskCategories = useMemo(
+    () => driverChart.categories.filter((c) => !DRIVER_PAY_CATEGORY_SET.has(c)),
+    [driverChart.categories],
+  );
+
+  const activeTableCategories = useMemo(() => {
+    if (driverTablePreset === 'pay') {
+      return driverPayCategories.length > 0
+        ? driverPayCategories
+        : [DRIVER_PAY_CATEGORIES.advance, DRIVER_PAY_CATEGORIES.allowance, DRIVER_PAY_CATEGORIES.salary];
+    }
+    if (driverTablePreset === 'tasks') return driverTaskCategories;
+    if (driverTablePreset === 'all') return driverChart.categories;
+    const custom = driverTableCategories.filter((c) => driverChart.categories.includes(c));
+    return custom.length > 0 ? custom : driverPayCategories;
+  }, [
+    driverTablePreset,
+    driverTableCategories,
+    driverPayCategories,
+    driverTaskCategories,
+    driverChart.categories,
+  ]);
+
+  const driverTableRows = useMemo(() => {
+    const q = driverTableDriverQuery.trim().toLowerCase();
+    return driverChart.rows
+      .map((row) => {
+        const amounts: Record<string, number> = {};
+        let selectedTotal = 0;
+        for (const category of activeTableCategories) {
+          const amount = driverCategoryAmount(row, category);
+          amounts[category] = amount;
+          selectedTotal += amount;
+        }
+        return { row, amounts, selectedTotal };
+      })
+      .filter(({ row, selectedTotal }) => {
+        if (selectedTotal <= 0) return false;
+        if (!q) return true;
+        return String(row.driver).toLowerCase().includes(q);
+      })
+      .sort((a, b) => b.selectedTotal - a.selectedTotal);
+  }, [driverChart.rows, activeTableCategories, driverTableDriverQuery]);
+
+  const driverTableColTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+    let total = 0;
+    for (const category of activeTableCategories) totals[category] = 0;
+    for (const { amounts, selectedTotal } of driverTableRows) {
+      total += selectedTotal;
+      for (const category of activeTableCategories) {
+        totals[category] = (totals[category] || 0) + (amounts[category] || 0);
+      }
+    }
+    return { totals, total };
+  }, [driverTableRows, activeTableCategories]);
+
+  const driverPayTotals = useMemo(() => {
+    return driverChart.rows.reduce(
+      (acc, r) => ({
+        advance: acc.advance + driverCategoryAmount(r, DRIVER_PAY_CATEGORIES.advance),
+        allowance: acc.allowance + driverCategoryAmount(r, DRIVER_PAY_CATEGORIES.allowance),
+        salary: acc.salary + driverCategoryAmount(r, DRIVER_PAY_CATEGORIES.salary),
+        tasks: acc.tasks + driverTaskCategories.reduce((s, c) => s + driverCategoryAmount(r, c), 0),
+        total: acc.total + Number(r.total),
+      }),
+      { advance: 0, allowance: 0, salary: 0, tasks: 0, total: 0 },
+    );
+  }, [driverChart.rows, driverTaskCategories]);
+
+  function applyDriverTablePreset(preset: 'pay' | 'tasks' | 'all') {
+    setDriverTablePreset(preset);
+    if (preset === 'pay') setDriverTableCategories(driverPayCategories);
+    else if (preset === 'tasks') setDriverTableCategories(driverTaskCategories);
+    else setDriverTableCategories(driverChart.categories);
+  }
+
+  function toggleDriverRow(driver: string) {
+    setExpandedDriverRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(driver)) next.delete(driver);
+      else next.add(driver);
+      return next;
+    });
+  }
+
   // Copy rows so Recharts stacked bars cannot mutate chart state in place.
   const driverChartData = driverChart.rows.map((row) => ({ ...row }));
 
@@ -766,6 +864,12 @@ export default function Dashboard() {
                   Salary{' '}
                   <span className="font-medium text-gray-900">{formatCurrency(driverPayTotals.salary)}</span>
                 </span>
+                {driverPayTotals.tasks > 0 && (
+                  <span>
+                    Tasks / other{' '}
+                    <span className="font-medium text-gray-900">{formatCurrency(driverPayTotals.tasks)}</span>
+                  </span>
+                )}
                 <span>
                   Total{' '}
                   <span className="font-medium text-gray-900">{formatCurrency(driverPayTotals.total)}</span>
@@ -851,69 +955,228 @@ export default function Dashboard() {
                   );
                 })}
               </div>
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full min-w-[520px] text-left text-xs">
-                  <thead>
-                    <tr className="border-b text-gray-500">
-                      <th className="py-1.5 pr-2 font-medium">Driver</th>
-                      <th className="py-1.5 pr-2 font-medium text-right">Advance</th>
-                      <th className="py-1.5 pr-2 font-medium text-right">Daily allowance</th>
-                      <th className="py-1.5 pr-2 font-medium text-right">Salary</th>
-                      <th className="py-1.5 pr-2 font-medium text-right">Total</th>
-                      <th className="py-1.5 font-medium text-right">Share</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {driverChart.rows.map((row) => {
-                      const share =
-                        driverPayTotals.total > 0
-                          ? (Number(row.total) / driverPayTotals.total) * 100
-                          : 0;
-                      return (
-                        <tr key={row.driver} className="border-b border-gray-100">
-                          <td className="py-1.5 pr-2">
+              <div className="mt-4 space-y-3 border-t pt-4">
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {([
+                      { key: 'pay', label: 'Pay' },
+                      { key: 'tasks', label: 'Tasks / other' },
+                      { key: 'all', label: 'All given' },
+                    ] as const).map((preset) => (
+                      <button
+                        key={preset.key}
+                        type="button"
+                        onClick={() => applyDriverTablePreset(preset.key)}
+                        className={cn(
+                          'rounded-md border px-2.5 py-1 text-xs transition-colors',
+                          driverTablePreset === preset.key
+                            ? 'border-blue-300 bg-blue-50 text-blue-800'
+                            : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50',
+                        )}
+                      >
+                        {preset.label}
+                        {preset.key === 'tasks' && driverTaskCategories.length > 0 && (
+                          <span className="ml-1 text-gray-400">({driverTaskCategories.length})</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="min-w-[160px] flex-1 sm:max-w-[220px]">
+                    <MultiSelectFilter
+                      label="Table columns"
+                      options={driverChart.categories}
+                      selected={activeTableCategories}
+                      onChange={(selected) => {
+                        setDriverTablePreset('custom');
+                        setDriverTableCategories(selected);
+                      }}
+                      placeholder="Categories"
+                    />
+                  </div>
+                  <div className="min-w-[140px] flex-1 sm:max-w-[200px]">
+                    <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                      Driver
+                    </label>
+                    <Input
+                      value={driverTableDriverQuery}
+                      onChange={(e) => setDriverTableDriverQuery(e.target.value)}
+                      placeholder="Filter driver..."
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-gray-500">
+                  Use <span className="font-medium text-gray-700">Tasks / other</span> to see Maintenance,
+                  Supplies, Meals, and other cash given to drivers for work — not salary or allowance.
+                </p>
+                {activeTableCategories.length === 0 ? (
+                  <p className="py-4 text-sm text-gray-500">
+                    {driverTablePreset === 'tasks'
+                      ? 'No task / other expenses given to drivers in this period.'
+                      : 'Select at least one category to show in the table.'}
+                  </p>
+                ) : driverTableRows.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-gray-500">No drivers match these filters.</p>
+                ) : (
+                  <>
+                    {/* Mobile: expandable rows */}
+                    <div className="space-y-2 md:hidden">
+                      {driverTableRows.map(({ row, amounts, selectedTotal }) => {
+                        const driver = String(row.driver);
+                        const open = expandedDriverRows.has(driver);
+                        const share =
+                          driverTableColTotals.total > 0
+                            ? (selectedTotal / driverTableColTotals.total) * 100
+                            : 0;
+                        return (
+                          <div
+                            key={driver}
+                            className="overflow-hidden rounded-lg border border-gray-200 bg-white"
+                          >
                             <button
                               type="button"
-                              className="font-medium text-blue-700 hover:underline"
-                              onClick={() => void openExpenseDrilldown('person', String(row.driver))}
+                              className="flex w-full items-center gap-3 px-3 py-2.5 text-left"
+                              onClick={() => toggleDriverRow(driver)}
+                              aria-expanded={open}
                             >
-                              {row.driver}
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium text-blue-700">{driver}</p>
+                                <div className="mt-1.5 h-1.5 w-full max-w-[160px] overflow-hidden rounded-full bg-gray-100">
+                                  <div
+                                    className="h-full rounded-full bg-blue-500"
+                                    style={{ width: `${Math.min(100, Math.max(4, share))}%` }}
+                                  />
+                                </div>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <p className="text-sm font-semibold tabular-nums text-gray-900">
+                                  {formatCurrency(selectedTotal)}
+                                </p>
+                                <p className="mt-0.5 flex items-center justify-end gap-1 text-[11px] text-gray-500">
+                                  {share.toFixed(0)}%
+                                  {open ? (
+                                    <ChevronUp className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <ChevronDown className="h-3.5 w-3.5" />
+                                  )}
+                                </p>
+                              </div>
                             </button>
-                          </td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums text-gray-700">
-                            {formatCurrency(driverPayAmount(row, 'advance'))}
-                          </td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums text-gray-700">
-                            {formatCurrency(driverPayAmount(row, 'allowance'))}
-                          </td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums text-gray-700">
-                            {formatCurrency(driverPayAmount(row, 'salary'))}
-                          </td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums font-medium text-gray-900">
-                            {formatCurrency(Number(row.total))}
-                          </td>
-                          <td className="py-1.5 text-right text-gray-500">{share.toFixed(0)}%</td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="border-t border-gray-200 bg-gray-50 font-medium text-gray-900">
-                      <td className="py-2 pr-2">All drivers</td>
-                      <td className="py-2 pr-2 text-right tabular-nums">
-                        {formatCurrency(driverPayTotals.advance)}
-                      </td>
-                      <td className="py-2 pr-2 text-right tabular-nums">
-                        {formatCurrency(driverPayTotals.allowance)}
-                      </td>
-                      <td className="py-2 pr-2 text-right tabular-nums">
-                        {formatCurrency(driverPayTotals.salary)}
-                      </td>
-                      <td className="py-2 pr-2 text-right tabular-nums">
-                        {formatCurrency(driverPayTotals.total)}
-                      </td>
-                      <td className="py-2 text-right text-gray-500">100%</td>
-                    </tr>
-                  </tbody>
-                </table>
+                            {open && (
+                              <div className="border-t border-gray-100 bg-gray-50 px-3 py-2.5">
+                                <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                                  {activeTableCategories.map((category) => (
+                                    <div key={category}>
+                                      <p className="text-[10px] uppercase tracking-wide text-gray-500">
+                                        {category}
+                                      </p>
+                                      <p className="text-sm font-medium tabular-nums text-gray-900">
+                                        {formatCurrency(amounts[category] || 0)}
+                                      </p>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="mt-3 flex gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="flex-1 text-xs"
+                                    onClick={() => void openExpenseDrilldown('person', driver)}
+                                  >
+                                    View expenses
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs">
+                        <div className="flex items-center justify-between font-medium text-gray-900">
+                          <span>All drivers</span>
+                          <span className="tabular-nums">{formatCurrency(driverTableColTotals.total)}</span>
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-gray-600">
+                          {activeTableCategories.map((category) => (
+                            <div key={category} className="flex justify-between gap-2">
+                              <span className="truncate">{category}</span>
+                              <span className="shrink-0 tabular-nums">
+                                {formatCurrency(driverTableColTotals.totals[category] || 0)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Desktop: full table */}
+                    <div className="hidden overflow-x-auto md:block">
+                      <table className="w-full min-w-[520px] text-left text-xs">
+                        <thead>
+                          <tr className="border-b text-gray-500">
+                            <th className="py-1.5 pr-2 font-medium">Driver</th>
+                            {activeTableCategories.map((category) => (
+                              <th
+                                key={category}
+                                className="whitespace-nowrap py-1.5 pr-2 text-right font-medium"
+                              >
+                                {category}
+                              </th>
+                            ))}
+                            <th className="py-1.5 pr-2 text-right font-medium">Total</th>
+                            <th className="py-1.5 text-right font-medium">Share</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {driverTableRows.map(({ row, amounts, selectedTotal }) => {
+                            const share =
+                              driverTableColTotals.total > 0
+                                ? (selectedTotal / driverTableColTotals.total) * 100
+                                : 0;
+                            return (
+                              <tr key={row.driver} className="border-b border-gray-100">
+                                <td className="py-1.5 pr-2">
+                                  <button
+                                    type="button"
+                                    className="font-medium text-blue-700 hover:underline"
+                                    onClick={() => void openExpenseDrilldown('person', String(row.driver))}
+                                  >
+                                    {row.driver}
+                                  </button>
+                                </td>
+                                {activeTableCategories.map((category) => (
+                                  <td
+                                    key={category}
+                                    className="py-1.5 pr-2 text-right tabular-nums text-gray-700"
+                                  >
+                                    {formatCurrency(amounts[category] || 0)}
+                                  </td>
+                                ))}
+                                <td className="py-1.5 pr-2 text-right tabular-nums font-medium text-gray-900">
+                                  {formatCurrency(selectedTotal)}
+                                </td>
+                                <td className="py-1.5 text-right text-gray-500">{share.toFixed(0)}%</td>
+                              </tr>
+                            );
+                          })}
+                          <tr className="border-t border-gray-200 bg-gray-50 font-medium text-gray-900">
+                            <td className="py-2 pr-2">All drivers</td>
+                            {activeTableCategories.map((category) => (
+                              <td key={category} className="py-2 pr-2 text-right tabular-nums">
+                                {formatCurrency(driverTableColTotals.totals[category] || 0)}
+                              </td>
+                            ))}
+                            <td className="py-2 pr-2 text-right tabular-nums">
+                              {formatCurrency(driverTableColTotals.total)}
+                            </td>
+                            <td className="py-2 text-right text-gray-500">100%</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
               </div>
             </>
           )}
