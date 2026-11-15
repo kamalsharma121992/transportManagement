@@ -1,8 +1,23 @@
-import { supabase, EXPENSE_ADVANCE_CATEGORY } from '@/lib/supabase';
+import {
+  getSupabase,
+  supabase,
+  EXPENSE_ADVANCE_CATEGORY,
+  DRIVER_PAY_CATEGORIES,
+  SALARY_CATEGORIES,
+} from '@/lib/supabase';
 import { getMonthDateRange } from '@/lib/format';
 import { applyInFilter, hasMultiValueFilters } from '@/lib/filter-helpers';
 import { buildTextSearchFilter, EXPENSE_SEARCH_COLUMNS, TRIP_SEARCH_COLUMNS } from '@/lib/search';
 import { tripPaymentAmounts, tripRecognisedRevenue } from '@/lib/trip-payments';
+
+const SALARY_CATEGORY_SET = new Set<string>(SALARY_CATEGORIES);
+
+function classifyDriverPayCategory(category: string): 'advance' | 'allowance' | 'salary' | null {
+  if (category === DRIVER_PAY_CATEGORIES.advance) return 'advance';
+  if (category === DRIVER_PAY_CATEGORIES.allowance) return 'allowance';
+  if (SALARY_CATEGORY_SET.has(category) || category === DRIVER_PAY_CATEGORIES.salary) return 'salary';
+  return null;
+}
 
 export type DashboardStats = {
   tripCount: number;
@@ -426,5 +441,139 @@ export async function fetchDashboardVehicleExpenses(
   const { data, error } = await query;
   if (error) return { data: [], error: error.message };
   return { data: (data || []) as DashboardCategoryExpense[], error: null };
+}
+
+/** Expenses given to one person/driver, using the same dashboard filters. */
+export async function fetchDashboardPersonExpenses(
+  filters: DashboardFilterParams,
+  person: string,
+): Promise<{ data: DashboardCategoryExpense[]; error: string | null }> {
+  let query = applyDashboardExpenseFilters(
+    supabase
+      .from('expenses')
+      .select('id, date, amount, category, description, vehicle_number, paid_by_person, person, payment_source, status')
+      .eq('person', person)
+      .order('date', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(100),
+    filters,
+  );
+
+  const { data, error } = await query;
+  if (error) return { data: [], error: error.message };
+  return { data: (data || []) as DashboardCategoryExpense[], error: null };
+}
+
+export type DriverExpenseChartRow = {
+  driver: string;
+  total: number;
+  /** Pay breakdown — separate from category stack keys (Advance / Daily Allowance / Salary). */
+  payAdvance: number;
+  payAllowance: number;
+  paySalary: number;
+  [category: string]: string | number;
+};
+
+export type DriverExpenseChart = {
+  categories: string[];
+  rows: DriverExpenseChartRow[];
+};
+
+/**
+ * Stacked driver expense chart: expenses whose "person" (Given to) matches a driver
+ * (or someone who drove trips in-range), broken down by category.
+ */
+export async function fetchDashboardDriverExpenseChart(
+  filters: DashboardFilterParams,
+): Promise<{ data: DriverExpenseChart; error: string | null }> {
+  const empty: DriverExpenseChart = { categories: [], rows: [] };
+  const db = getSupabase();
+
+  const [{ data: driverRows, error: driverError }, { data: tripDriverRows, error: tripDriverError }] =
+    await Promise.all([
+      db.from('drivers').select('name').order('name'),
+      applyDashboardTripFilters(
+        db.from('trips').select('driver_name'),
+        filters,
+      ),
+    ]);
+
+  if (driverError) return { data: empty, error: driverError.message };
+  if (tripDriverError) return { data: empty, error: tripDriverError.message };
+
+  /** lower(name) → display name */
+  const driverByKey = new Map<string, string>();
+  for (const row of driverRows || []) {
+    const name = String((row as { name: string }).name || '').trim();
+    if (name) driverByKey.set(name.toLowerCase(), name);
+  }
+  for (const row of tripDriverRows || []) {
+    const name = String((row as { driver_name: string | null }).driver_name || '').trim();
+    if (name && !driverByKey.has(name.toLowerCase())) {
+      driverByKey.set(name.toLowerCase(), name);
+    }
+  }
+
+  if (driverByKey.size === 0) return { data: empty, error: null };
+
+  // Load filtered expenses, then match drivers client-side (avoids fragile .in() + name casing issues).
+  let query = applyDashboardExpenseFilters(
+    db
+      .from('expenses')
+      .select('person, category, amount')
+      .not('person', 'is', null)
+      .limit(10000),
+    filters,
+  );
+
+  const { data, error } = await query;
+  if (error) return { data: empty, error: error.message };
+
+  const byDriver: Record<string, Record<string, number>> = {};
+  const catTotals: Record<string, number> = {};
+
+  for (const row of data || []) {
+    const personRaw = String((row as { person: string | null }).person || '').trim();
+    if (!personRaw) continue;
+    const displayName = driverByKey.get(personRaw.toLowerCase());
+    if (!displayName) continue;
+
+    const category = String((row as { category: string }).category || 'Other').trim() || 'Other';
+    const amount = num((row as { amount: number }).amount);
+    if (amount === 0) continue;
+
+    if (!byDriver[displayName]) byDriver[displayName] = {};
+    byDriver[displayName][category] = (byDriver[displayName][category] || 0) + amount;
+    catTotals[category] = (catTotals[category] || 0) + amount;
+  }
+
+  const categories = Object.entries(catTotals)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name);
+
+  const rows: DriverExpenseChartRow[] = Object.entries(byDriver)
+    .map(([driver, cats]) => {
+      const row: DriverExpenseChartRow = {
+        driver,
+        total: 0,
+        payAdvance: 0,
+        payAllowance: 0,
+        paySalary: 0,
+      };
+      for (const category of categories) {
+        const value = Number(cats[category] || 0);
+        row[category] = value;
+        row.total = Number(row.total) + value;
+        const payKind = classifyDriverPayCategory(category);
+        if (payKind === 'advance') row.payAdvance += value;
+        else if (payKind === 'allowance') row.payAllowance += value;
+        else if (payKind === 'salary') row.paySalary += value;
+      }
+      return row;
+    })
+    .filter((r) => Number(r.total) > 0)
+    .sort((a, b) => Number(b.total) - Number(a.total));
+
+  return { data: { categories, rows }, error: null };
 }
 

@@ -6,7 +6,11 @@ import { formatCurrency, formatDate, getMonthFilterOptions, FILTER_SELECT_CLASS 
 import {
   type DashboardCategoryExpense,
   type DashboardStats,
+  type DriverExpenseChart,
+  type DriverExpenseChartRow,
   fetchDashboardCategoryExpenses,
+  fetchDashboardDriverExpenseChart,
+  fetchDashboardPersonExpenses,
   fetchDashboardStats,
   fetchDashboardVehicleExpenses,
   getDashboardDateRange,
@@ -120,6 +124,13 @@ function expensesVehicleHref(vehicle: string, opts: ExpenseHrefOpts) {
   return `/expenses?${params.toString()}`;
 }
 
+function expensesPersonHref(person: string, opts: ExpenseHrefOpts) {
+  const params = new URLSearchParams();
+  params.set('persons', person);
+  applyExpenseHrefOpts(params, { ...opts, persons: [person] });
+  return `/expenses?${params.toString()}`;
+}
+
 const emptyStats: DashboardStats = {
   tripCount: 0,
   totalRevenue: 0,
@@ -147,7 +158,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const hasLoadedRef = useRef(false);
-  const [expenseSheet, setExpenseSheet] = useState<{ kind: 'category' | 'vehicle'; key: string } | null>(null);
+  const [expenseSheet, setExpenseSheet] = useState<{ kind: 'category' | 'vehicle' | 'person'; key: string } | null>(null);
+  const [driverChart, setDriverChart] = useState<DriverExpenseChart>({ categories: [], rows: [] });
+  const [hiddenDriverCategories, setHiddenDriverCategories] = useState<Set<string>>(() => new Set());
   const [sheetExpenses, setSheetExpenses] = useState<DashboardCategoryExpense[]>([]);
   const [sheetLoading, setSheetLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(() => Boolean(
@@ -246,7 +259,7 @@ export default function Dashboard() {
 
       try {
         const { dateFrom, dateTo } = getDashboardDateRange(filterMonth, filterDateFrom, filterDateTo);
-        const { data, error } = await fetchDashboardStats({
+        const filters = {
           dateFrom,
           dateTo,
           tripVehicles: filterVehicles,
@@ -257,10 +270,20 @@ export default function Dashboard() {
           expVehicles: filterVehicles,
           expPaymentSources: filterPaymentSources,
           expSearch: searchQuery || null,
-        });
+        };
+        const [{ data, error }, driverResult] = await Promise.all([
+          fetchDashboardStats(filters),
+          fetchDashboardDriverExpenseChart(filters),
+        ]);
 
         if (error) toast.error('Failed to load dashboard: ' + error);
         else setStats({ ...emptyStats, ...(data || {}) });
+
+        if (driverResult.error) toast.error('Failed to load driver expenses: ' + driverResult.error);
+        else {
+          setDriverChart(driverResult.data);
+          setHiddenDriverCategories(new Set());
+        }
       } catch (err) {
         toast.error('Failed to load dashboard: ' + (err instanceof Error ? err.message : 'Unknown error'));
       } finally {
@@ -298,20 +321,33 @@ export default function Dashboard() {
     filterPaidByEntities, filterPaidByPersons, filterPersons, filterPaymentSources, searchQuery,
   ]);
 
-  async function openExpenseDrilldown(kind: 'category' | 'vehicle', key: string) {
+  async function openExpenseDrilldown(kind: 'category' | 'vehicle' | 'person', key: string) {
     if (!key) return;
     setExpenseSheet({ kind, key });
     setSheetLoading(true);
     setSheetExpenses([]);
     const { data, error } = kind === 'category'
       ? await fetchDashboardCategoryExpenses(dashboardFilters, key)
-      : await fetchDashboardVehicleExpenses(dashboardFilters, key);
+      : kind === 'vehicle'
+        ? await fetchDashboardVehicleExpenses(dashboardFilters, key)
+        : await fetchDashboardPersonExpenses(dashboardFilters, key);
     setSheetLoading(false);
     if (error) {
       toast.error('Failed to load expenses: ' + error);
       return;
     }
     setSheetExpenses(data);
+  }
+
+  function toggleDriverCategory(category: string) {
+    setHiddenDriverCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      // Keep at least one category visible
+      if (next.size >= driverChart.categories.length) return prev;
+      return next;
+    });
   }
 
   const sheetHrefOpts: ExpenseHrefOpts = {
@@ -330,8 +366,35 @@ export default function Dashboard() {
   const sheetExpensesHref = expenseSheet
     ? expenseSheet.kind === 'category'
       ? expensesCategoryHref(expenseSheet.key, sheetHrefOpts)
-      : expensesVehicleHref(expenseSheet.key, sheetHrefOpts)
+      : expenseSheet.kind === 'vehicle'
+        ? expensesVehicleHref(expenseSheet.key, sheetHrefOpts)
+        : expensesPersonHref(expenseSheet.key, sheetHrefOpts)
     : '/expenses';
+
+  const visibleDriverCategories = driverChart.categories.filter((c) => !hiddenDriverCategories.has(c));
+  const driverPayAmount = (row: DriverExpenseChartRow, kind: 'advance' | 'allowance' | 'salary') => {
+    if (kind === 'advance') {
+      return Number(row.payAdvance || 0) || Number(row['Advance'] || 0);
+    }
+    if (kind === 'allowance') {
+      return Number(row.payAllowance || 0) || Number(row['Daily Allowance'] || 0);
+    }
+    return (
+      Number(row.paySalary || 0)
+      || Number(row['Salary'] || 0) + Number(row['Driver Salary'] || 0)
+    );
+  };
+  const driverPayTotals = driverChart.rows.reduce(
+    (acc, r) => ({
+      advance: acc.advance + driverPayAmount(r, 'advance'),
+      allowance: acc.allowance + driverPayAmount(r, 'allowance'),
+      salary: acc.salary + driverPayAmount(r, 'salary'),
+      total: acc.total + Number(r.total),
+    }),
+    { advance: 0, allowance: 0, salary: 0, total: 0 },
+  );
+  // Copy rows so Recharts stacked bars cannot mutate chart state in place.
+  const driverChartData = driverChart.rows.map((row) => ({ ...row }));
 
   const periodLabel = filterMonth
     ? new Date(`${filterMonth}-01`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
@@ -672,6 +735,190 @@ export default function Dashboard() {
           </ResponsiveContainer>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Driver-wise Expenses</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-3 text-xs text-gray-500">
+            Stacked by category · click legend to show/hide · click a bar for that driver&apos;s expenses
+          </p>
+          {driverChart.rows.length === 0 ? (
+            <p className="py-8 text-sm text-gray-500">
+              No expenses given to drivers for {periodLabel}. Try another month or clear filters.
+            </p>
+          ) : (
+            <>
+              <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                <span>
+                  {driverChart.rows.length} driver{driverChart.rows.length === 1 ? '' : 's'}
+                </span>
+                <span>
+                  Advance{' '}
+                  <span className="font-medium text-gray-900">{formatCurrency(driverPayTotals.advance)}</span>
+                </span>
+                <span>
+                  Daily allowance{' '}
+                  <span className="font-medium text-gray-900">{formatCurrency(driverPayTotals.allowance)}</span>
+                </span>
+                <span>
+                  Salary{' '}
+                  <span className="font-medium text-gray-900">{formatCurrency(driverPayTotals.salary)}</span>
+                </span>
+                <span>
+                  Total{' '}
+                  <span className="font-medium text-gray-900">{formatCurrency(driverPayTotals.total)}</span>
+                </span>
+              </div>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={driverChartData} margin={{ left: 4, right: 8, top: 8, bottom: 48 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="driver"
+                    fontSize={11}
+                    interval={0}
+                    angle={-30}
+                    textAnchor="end"
+                    height={60}
+                  />
+                  <YAxis tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} fontSize={12} />
+                  <Tooltip
+                    formatter={(value, name) => [formatCurrency(Number(value)), String(name)]}
+                    labelFormatter={(label) => String(label)}
+                  />
+                  <Legend
+                    wrapperStyle={{ cursor: 'pointer' }}
+                    onClick={(entry) => {
+                      const key = String(entry.dataKey || entry.value || '');
+                      if (key) toggleDriverCategory(key);
+                    }}
+                    formatter={(value) => (
+                      <span
+                        className={cn(
+                          'text-xs',
+                          hiddenDriverCategories.has(String(value)) && 'text-gray-400 line-through',
+                        )}
+                      >
+                        {value}
+                      </span>
+                    )}
+                  />
+                  {visibleDriverCategories.map((category, index) => {
+                    const colorIndex = driverChart.categories.indexOf(category);
+                    const isLast = index === visibleDriverCategories.length - 1;
+                    return (
+                      <Bar
+                        key={category}
+                        dataKey={category}
+                        name={category}
+                        stackId="driver-expenses"
+                        fill={COLORS[(colorIndex >= 0 ? colorIndex : index) % COLORS.length]}
+                        radius={isLast ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                        cursor="pointer"
+                        onClick={(data) => {
+                          const row = data as { driver?: string; payload?: { driver?: string } };
+                          const driver = row?.payload?.driver || row?.driver;
+                          if (driver) void openExpenseDrilldown('person', driver);
+                        }}
+                      />
+                    );
+                  })}
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {driverChart.categories.map((category, i) => {
+                  const hidden = hiddenDriverCategories.has(category);
+                  return (
+                    <button
+                      key={category}
+                      type="button"
+                      onClick={() => toggleDriverCategory(category)}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors',
+                        hidden
+                          ? 'border-gray-200 bg-gray-50 text-gray-400 line-through'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50',
+                      )}
+                      title={hidden ? `Show ${category}` : `Hide ${category}`}
+                    >
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                        style={{ backgroundColor: hidden ? '#d1d5db' : COLORS[i % COLORS.length] }}
+                      />
+                      {category}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[520px] text-left text-xs">
+                  <thead>
+                    <tr className="border-b text-gray-500">
+                      <th className="py-1.5 pr-2 font-medium">Driver</th>
+                      <th className="py-1.5 pr-2 font-medium text-right">Advance</th>
+                      <th className="py-1.5 pr-2 font-medium text-right">Daily allowance</th>
+                      <th className="py-1.5 pr-2 font-medium text-right">Salary</th>
+                      <th className="py-1.5 pr-2 font-medium text-right">Total</th>
+                      <th className="py-1.5 font-medium text-right">Share</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {driverChart.rows.map((row) => {
+                      const share =
+                        driverPayTotals.total > 0
+                          ? (Number(row.total) / driverPayTotals.total) * 100
+                          : 0;
+                      return (
+                        <tr key={row.driver} className="border-b border-gray-100">
+                          <td className="py-1.5 pr-2">
+                            <button
+                              type="button"
+                              className="font-medium text-blue-700 hover:underline"
+                              onClick={() => void openExpenseDrilldown('person', String(row.driver))}
+                            >
+                              {row.driver}
+                            </button>
+                          </td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums text-gray-700">
+                            {formatCurrency(driverPayAmount(row, 'advance'))}
+                          </td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums text-gray-700">
+                            {formatCurrency(driverPayAmount(row, 'allowance'))}
+                          </td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums text-gray-700">
+                            {formatCurrency(driverPayAmount(row, 'salary'))}
+                          </td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums font-medium text-gray-900">
+                            {formatCurrency(Number(row.total))}
+                          </td>
+                          <td className="py-1.5 text-right text-gray-500">{share.toFixed(0)}%</td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="border-t border-gray-200 bg-gray-50 font-medium text-gray-900">
+                      <td className="py-2 pr-2">All drivers</td>
+                      <td className="py-2 pr-2 text-right tabular-nums">
+                        {formatCurrency(driverPayTotals.advance)}
+                      </td>
+                      <td className="py-2 pr-2 text-right tabular-nums">
+                        {formatCurrency(driverPayTotals.allowance)}
+                      </td>
+                      <td className="py-2 pr-2 text-right tabular-nums">
+                        {formatCurrency(driverPayTotals.salary)}
+                      </td>
+                      <td className="py-2 pr-2 text-right tabular-nums">
+                        {formatCurrency(driverPayTotals.total)}
+                      </td>
+                      <td className="py-2 text-right text-gray-500">100%</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
       </div>
       )}
 
@@ -686,7 +933,11 @@ export default function Dashboard() {
             <>
               <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:px-5">
                 <DialogTitle className="truncate">
-                  {expenseSheet.kind === 'vehicle' ? `Vehicle ${expenseSheet.key}` : expenseSheet.key}
+                  {expenseSheet.kind === 'vehicle'
+                    ? `Vehicle ${expenseSheet.key}`
+                    : expenseSheet.kind === 'person'
+                      ? `Driver ${expenseSheet.key}`
+                      : expenseSheet.key}
                 </DialogTitle>
                 <p className="text-sm text-gray-500">
                   {periodLabel}
@@ -710,7 +961,9 @@ export default function Dashboard() {
                   <p className="py-8 text-sm text-gray-500">
                     {expenseSheet.kind === 'vehicle'
                       ? 'No vehicle expenses for this vehicle under the current filters.'
-                      : 'No expenses in this category for the current filters.'}
+                      : expenseSheet.kind === 'person'
+                        ? 'No expenses for this driver under the current filters.'
+                        : 'No expenses in this category for the current filters.'}
                   </p>
                 ) : (
                   <ul className="space-y-2">
@@ -724,9 +977,9 @@ export default function Dashboard() {
                             </p>
                             <p className="mt-1 truncate text-xs text-gray-500">
                               {[
-                                expenseSheet.kind === 'category' ? exp.vehicle_number : exp.category,
+                                expenseSheet.kind === 'person' ? exp.category : expenseSheet.kind === 'category' ? exp.vehicle_number : exp.category,
+                                expenseSheet.kind !== 'person' && exp.person && `Given to ${exp.person}`,
                                 exp.paid_by_person && `Paid by ${exp.paid_by_person}`,
-                                exp.person && `Given to ${exp.person}`,
                                 exp.payment_source,
                               ].filter(Boolean).join(' · ')}
                             </p>
